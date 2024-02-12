@@ -13,6 +13,7 @@ class Magnus2Propagator:
                  dm,
                  bc,
                  get_veff,
+                 v_ext,
                  fock_init = None,
                  fock_prev = None,
                  stepcallback = donothing,
@@ -28,6 +29,7 @@ class Magnus2Propagator:
         self.dt = dt
         self.stepcallback = stepcallback
         self.tol_interpol = tol_interpol
+        self.v_ext = v_ext
         
         fock_ao = fock_init if fock_init is not None else h1e + get_veff(dm=dm)
         
@@ -40,6 +42,9 @@ class Magnus2Propagator:
         self.dm = bc.rotate_denslike(dm)
     
         self.logger = logger
+        
+        self.stepcallback(self.time, self.dm)
+        
     def step(self):
         F_m_half = self.fock_prev
         F = self.fock
@@ -51,7 +56,7 @@ class Magnus2Propagator:
 
         while not converged:
             
-            W = (-1.0j * self.dt) * F_p_half
+            W = (-1.0j * self.dt) * (F_p_half + self.v_ext(self.time + 0.5 * self.dt))
             expw = sla.expm(W)
             
             dm_p_dt_new = np.linalg.multi_dot([expw, self.dm, expw.conj().T])
@@ -80,5 +85,5 @@ class Magnus2Propagator:
         self.fock_prev = F
         self.fock = F_p_dt
         self.time = self.time + self.dt
-        self.stepcallback(self)
+        self.stepcallback(self.time, self.dm)
         

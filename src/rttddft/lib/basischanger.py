@@ -2,7 +2,7 @@ import numpy as np
 from functools import reduce
 
 def chaindot(*args):
-    return reduce(np.dot, args)
+    return reduce(np.matmul, args)
 
 class BasisChanger:
     """Basis change helper class.
