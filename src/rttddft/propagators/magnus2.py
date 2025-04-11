@@ -14,14 +14,15 @@ class Magnus2Propagator:
                  bc,
                  get_veff,
                  v_ext,
+                 all_mo_basis = False,
                  fock_init = None,
                  fock_prev = None,
                  stepcallback = donothing,
                  starttime = 0.0,
                  dt = 0.1,
-                 tol_interpol = 1e-7,
+                 tol_interpol = 1e-6,
                  logger = None):
-        
+
         self.h1e = h1e
         self.get_veff = get_veff
         self.bc = bc
@@ -30,19 +31,21 @@ class Magnus2Propagator:
         self.stepcallback = stepcallback
         self.tol_interpol = tol_interpol
         self.v_ext = v_ext
-        
-        fock_ao = fock_init if fock_init is not None else h1e + get_veff(dm=dm)
-        
-        self.fock = bc.rotate_focklike(fock_ao)
-        
-        fock_prev_ao = fock_prev if fock_prev is not None else self.fock
-        
-        self.fock_prev = bc.rotate_focklike(fock_prev_ao)
-    
-        self.dm = bc.rotate_denslike(dm)
-    
+        self.all_mo_basis = all_mo_basis
+
+        if not all_mo_basis:
+            fock_ao = fock_init if fock_init is not None else h1e + get_veff(dm=dm)
+            self.fock = bc.rotate_focklike(fock_ao)
+            fock_prev_ao = fock_prev if fock_prev is not None else self.fock
+            self.fock_prev = bc.rotate_focklike(fock_prev_ao)
+            self.dm = bc.rotate_denslike(dm)
+        else:
+            self.fock = fock_init if fock_init is not None else h1e + get_veff(dm=dm)
+            self.fock_prev = fock_prev if fock_prev is not None else self.fock
+            self.dm = dm
+
         self.logger = logger
-        
+
         self.stepcallback(self.time, self.dm)
         
     def step(self):
@@ -58,27 +61,32 @@ class Magnus2Propagator:
             
             W = (-1.0j * self.dt) * (F_p_half + self.v_ext(self.time + 0.5 * self.dt))
             expw = sla.expm(W)
-            
+
             dm_p_dt_new = np.linalg.multi_dot([expw, self.dm, expw.conj().T])
-            
+
             diff = np.linalg.norm(dm_p_dt_new - dm_p_dt)
-            
+
             dm_p_dt_old = dm_p_dt
             dm_p_dt = dm_p_dt_new
             
             if diff < self.tol_interpol:
                 converged = True
-            
+
             else:
-                dm_p_dt_ao = self.bc.rev_denslike(dm_p_dt)
-                F_p_dt_ao = self.h1e + self.get_veff(dm=dm_p_dt_ao)
-                F_p_dt = self.bc.rotate_focklike(F_p_dt_ao)
+                if not self.all_mo_basis:
+                    dm_p_dt_ao = self.bc.rev_denslike(dm_p_dt)
+                    F_p_dt_ao = self.h1e + self.get_veff(dm=dm_p_dt_ao)
+                    F_p_dt = self.bc.rotate_focklike(F_p_dt_ao)
+                else:
+                    F_p_dt = self.h1e + self.get_veff(dm=dm_p_dt)
+
                 nbuilds += 1
                 F_p_half = 0.5 * (F + F_p_dt)
-                        
+
+
             if self.logger is not None:
                 self.logger.debug(f'Magnus2: time {self.time:.3f}, {nbuilds} get_veff call(s), |drho| = {diff:1.3e}')
-            
+
 
 
         self.dm = dm_p_dt
@@ -86,4 +94,6 @@ class Magnus2Propagator:
         self.fock = F_p_dt
         self.time = self.time + self.dt
         self.stepcallback(self.time, self.dm)
-        
+
+
+

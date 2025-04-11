@@ -46,6 +46,45 @@ def kick_field(t0, peak, dir=(0,0,1.0)):
         return (np.isclose(t,t0) * peak) * uhat
     return E
 
+def sine_efield(E0, omega, dir=(0,0,1.0), start=0.0, shift=0.0):
+    uhat = np.asarray(dir)
+    uhat = uhat / np.linalg.norm(uhat)
+    def E(t):
+        if t < start:
+            return 0.0 * uhat
+        else:
+            return E0 * np.sin(omega * (t - start) - shift) * uhat
+    return E
+
+def intensity_to_e0_au(intensity):
+    """Convert intensity in W/cm^2 to E0 in atomic units
+
+    Parameters
+    ----------
+    intensity : float
+        Intensity in W/cm^2
+    
+    Returns
+    -------
+    float
+        E0 in atomic units
+    """
+    return np.sqrt(intensity / (3.50944758e16))
+
+def make_bc(mf):
+    return BasisChanger(mf.get_ovlp(), mf.mo_coeff)
+
+def get_mo_dip(bc, mol, origin=(0., 0., 0.)):
+    with mol.with_common_origin(origin):
+        ao_dip = mol.intor_symmetric('int1e_r', comp=3)
+    return bc.rotate_focklike(ao_dip)
+
+def make_vext_from_efield(efield, mo_dip):
+    if efield is not None:
+        v_ext = lambda t: -np.einsum('xij,x->ij', mo_dip, efield(t))
+    else: 
+        v_ext = lambda t: 0.0
+    return v_ext
 
 class RTTDSCF(lib.StreamObject):
     def __init__(self, mf, prop_method='magnus2'):
@@ -54,55 +93,55 @@ class RTTDSCF(lib.StreamObject):
         self.verbose = mf.verbose
         self.stdout = mf.stdout
         self.max_memory = mf.max_memory
+        self.prop = None
+        self.trace = None
 
         self.wfnsym = None
         if prop_method not in RTSCF_PROP_METHODS:
             raise ValueError(f'prop_method {prop_method} not recognized')
         self.prop_method = prop_method
-        
+
     
     def kernel(self, t_end, dt, t_start=0.0, efield=None):
         bc = BasisChanger(self._scf.get_ovlp(), self._scf.mo_coeff)
         log = logger.new_logger(self, self.verbose)
-        with self.mol.with_common_origin((0,0,0)):
-           ao_dip = self.mol.intor_symmetric('int1e_r', comp=3)
-        mo_dip = bc.rotate_focklike(ao_dip)
+
+        mo_dip = get_mo_dip(bc, self.mol)
         charges = self.mol.atom_charges()
         coords  = self.mol.atom_coords()
         nucl_dip = np.einsum('i,ix->x', charges, coords)
 
-        if efield is not None:
-            v_ext = lambda t: -np.einsum('xij,x->ij', mo_dip, efield(t))
-        else: 
-            v_ext = lambda t: 0.0
+        v_ext = make_vext_from_efield(efield, mo_dip)
         
-        self.trace = {'t': [], 'dipole': []}
+        self.trace = {'t': [], 'dipole': [], 'dm': []}
         
         def stepcallback(t, dm):
             dipole = -np.sum(mo_dip * dm[None,:,:].real, axis=(1,2))
             self.trace['t'].append(t)
             self.trace['dipole'].append(dipole)
+            self.trace['dm'].append(dm.copy())
         
 
-        if self.prop_method == 'magnus2':
-            prop = magnus2.Magnus2Propagator(
-                h1e = self.mol.intor('int1e_kin') + self.mol.intor('int1e_nuc'),
-                get_veff = self._scf.get_veff,
-                dm = self._scf.make_rdm1(),
-                bc = bc,
-                v_ext = v_ext,
-                dt = dt,
-                stepcallback=stepcallback,
-                logger = log
-            )
-        else:
-            raise ValueError(f'prop_method {self.prop_method} not recognized')
-        
+        if self.prop is None:
+            if self.prop_method == 'magnus2':
+                self.prop = magnus2.Magnus2Propagator(
+                    h1e = self.mol.intor('int1e_kin') + self.mol.intor('int1e_nuc'),
+                    get_veff = self._scf.get_veff,
+                    dm = self._scf.make_rdm1(),
+                    bc = bc,
+                    v_ext = v_ext,
+                    dt = dt,
+                    stepcallback=stepcallback,
+                    logger = log
+                )
+            else:
+                raise ValueError(f'prop_method {self.prop_method} not recognized')
+
+
         if t_end <= t_start:
             raise ValueError('t_end must be greater than t_start')
         
         nsteps = math.ceil((t_end - t_start) / dt)
         
         for _ in range(nsteps):
-            prop.step()
-        self.prop = prop
+            self.prop.step()
