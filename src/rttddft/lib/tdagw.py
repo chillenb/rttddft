@@ -3,6 +3,7 @@ import numpy as np
 import numexpr as ne
 import scipy.linalg as sla
 import scipy
+import h5py
 from fcdmft.utils import arraymath
 from rttddft.rttdbase import RTTDSCF, get_mo_dip, make_bc, make_vext_from_efield
 
@@ -109,8 +110,8 @@ class TDAGW(RTTDSCF):
 
 
 
-    def __init__(self, gw, prop_method='magnus2'):
-        super().__init__(gw._scf, prop_method)
+    def __init__(self, gw, prop_method='magnus2', **kwargs):
+        super().__init__(gw._scf, prop_method, **kwargs)
         self.gw = gw
 
     def kernel(self, t_end, dt, t_start=0.0, efield=None, **kwargs):
@@ -121,11 +122,32 @@ class TDAGW(RTTDSCF):
 
 
         self.trace = {'t': [], 'dipole': [], 'dm': []}
+
+        if t_end <= t_start:
+            raise ValueError('t_end must be greater than t_start')
+        
+        nsteps = math.ceil((t_end - t_start) / dt)
+
+        chkf = h5py.File(self.chkfile, "w") if self.chkfile is not None else None
+        if chkf is not None:
+            chkf.create_dataset('t', (0,), maxshape=(None,), dtype=np.float64, chunks=True)
+            chkf.create_dataset('dipole', (0, 3), maxshape=(None, 3), dtype=np.complex128, chunks=True)
+            chkf.create_dataset('dm', (0, self.mol.nao, self.mol.nao),
+                                dtype=np.complex128,
+                                maxshape=(None, self.mol.nao, self.mol.nao),
+                                chunks=(1, self.mol.nao, self.mol.nao))
         def stepcallback(t, dm):
             dipole = -np.sum(mo_dip * dm[None,:,:].real, axis=(1,2))
             self.trace['t'].append(t)
             self.trace['dipole'].append(dipole)
             self.trace['dm'].append(dm.copy())
+            if chkf is not None:
+                chkf['t'].resize((chkf['t'].shape[0] + 1), axis=0)
+                chkf['dipole'].resize((chkf['dipole'].shape[0] + 1), axis=0)
+                chkf['dm'].resize((chkf['dm'].shape[0] + 1), axis=0)
+                chkf['t'][-1] = t
+                chkf['dipole'][-1] = np.asarray(dipole, dtype=np.complex128)
+                chkf['dm'][-1] = np.asarray(dm, dtype=np.complex128)
 
         #hcore = self.mol.intor('int1e_kin') + self.mol.intor('int1e_nuc')
         #hcore_mo = bc.rotate_focklike(hcore)
@@ -200,16 +222,17 @@ if __name__ == '__main__':
 
 
     tdgw = TDAGW(gw)
+    tdgw.chkfile = 'tdgw.chk'
 
     tdgw.kernel(400, step, efield=efield)
     T = np.stack(tdgw.trace['t'])
     dms = np.stack(tdgw.trace['dm'])
     dp = np.stack(tdgw.trace['dipole']).T
-    import h5py
-    with h5py.File("/home/chillenb/src/rttddft/data/tdgw.h5", "w") as f:
-        f.create_dataset("t", data=T)
-        f.create_dataset("dipole", data=dp)
-        f.create_dataset("dm", data=dms)
+    # import h5py
+    # with h5py.File("/home/chillenb/src/rttddft/data/tdgw.h5", "w") as f:
+    #     f.create_dataset("t", data=T)
+    #     f.create_dataset("dipole", data=dp)
+    #     f.create_dataset("dm", data=dms)
 
     # tddft = RTTDSCF(mf)
 
