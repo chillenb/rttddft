@@ -58,6 +58,19 @@ def sine_efield(E0, omega, dir=(0,0,1.0), start=0.0, shift=0.0):
             return E0 * np.sin(omega * (t - start) - shift) * uhat
     return E
 
+def cos2_envelope(t, sigma):
+    if np.abs(t-sigma)<=sigma:
+        return np.cos(np.pi/(2*sigma) * (sigma-t))**2
+    else:
+        return 0.0
+
+def cos2_ewave(E0, omega, sigma, dir=(0,0,1.0), start=0.0, shift=0.0):
+    uhat = np.asarray(dir)
+    uhat = uhat / np.linalg.norm(uhat)
+    def E(t):
+        return E0 * np.sin(omega * (t - start) - shift) * cos2_envelope(t, sigma) * uhat
+    return E
+
 def intensity_to_e0_au(intensity):
     """Convert intensity in W/cm^2 to E0 in atomic units
 
