@@ -20,7 +20,7 @@ class Magnus2Propagator:
                  stepcallback = donothing,
                  starttime = 0.0,
                  dt = 0.1,
-                 tol_interpol = 1e-6,
+                 tol_interpol = 1e-5,
                  logger = None):
 
         self.h1e = h1e
@@ -69,7 +69,7 @@ class Magnus2Propagator:
             dm_p_dt_old = dm_p_dt
             dm_p_dt = dm_p_dt_new
             
-            if diff < self.tol_interpol:
+            if diff < self.tol_interpol * self.dt:
                 converged = True
 
             else:
