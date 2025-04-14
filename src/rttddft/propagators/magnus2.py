@@ -55,6 +55,7 @@ class Magnus2Propagator:
         nbuilds = 0
         dm_p_dt = np.copy(self.dm)
         F_p_half = 1.5 * F - 0.5 * F_m_dt
+        F_p_dt = F_p_half
 
         while not converged:
 
