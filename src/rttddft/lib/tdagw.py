@@ -5,7 +5,7 @@ import scipy.linalg as sla
 import scipy
 import h5py
 from fcdmft.utils import arraymath
-from rttddft.rttdbase import RTTDSCF, get_mo_dip, make_bc, make_vext_from_efield
+from rttddft.rttdbase import RTTDSCF, get_mo_dip, make_bc, make_vext_from_efield, RTSCF_PROP_METHODS
 
 from rttddft.propagators import magnus2
 from rttddft.lib import BasisChanger
@@ -164,18 +164,21 @@ class TDAGW(RTTDSCF):
             vz, waz = vhartree_and_screened_exchange(dm, Lpq, Lpqbar)
             return (vz-vz0) + 0.5*(waz-waz0)
 
-
-        self.prop = magnus2.Magnus2Propagator(
-            h1e = hcore_mo,
-            get_veff = get_veff,
-            dm = G0,
-            bc = bc,
-            all_mo_basis=True,
-            v_ext = v_ext,
-            dt = dt,
-            stepcallback=stepcallback,
-            logger = log
-        )
+        if self.prop is None:
+            if self.prop_method in RTSCF_PROP_METHODS:
+                self.prop = RTSCF_PROP_METHODS[self.prop_method](
+                    h1e = hcore_mo,
+                    get_veff = get_veff,
+                    dm = G0,
+                    bc = bc,
+                    all_mo_basis=True,
+                    v_ext = v_ext,
+                    dt = dt,
+                    stepcallback=stepcallback,
+                    logger = log
+                )
+            else:
+                raise ValueError(f'prop_method {self.prop_method} not recognized')
 
         if t_end <= t_start:
             raise ValueError('t_end must be greater than t_start')
@@ -215,13 +218,13 @@ if __name__ == '__main__':
 
 
 
-    step = 0.2
+    step = 0.4
     estrength = 0.00001
     from rttddft.rttdbase import gpulse_efield, kick_field
-    efield = kick_field(step/2, estrength, dir=(0,0,1.0))
+    efield = kick_field(0, estrength, dir=(0,0,1.0))
 
 
-    tdgw = TDAGW(gw)
+    tdgw = TDAGW(gw, prop_method='mmut')
     tdgw.chkfile = 'tdgw.chk'
 
     tdgw.kernel(400, step, efield=efield)

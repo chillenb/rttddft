@@ -13,10 +13,10 @@ from pyscf.data import nist
 
 import h5py
 
-from rttddft.propagators import magnus2
+from rttddft.propagators import magnus2, mmut
 from rttddft.lib import BasisChanger
 
-RTSCF_PROP_METHODS = {'magnus2'}
+RTSCF_PROP_METHODS = {'magnus2': magnus2.Magnus2Propagator, 'mmut': mmut.MMUTPropagator}
 
 def gpulse_efield(t0, peak, sigma, dir=(0,0,1.0), freq=0.0, phaseshift=0.0):
     """
@@ -137,18 +137,19 @@ class RTTDSCF(lib.StreamObject):
             self.trace['t'].append(t)
             self.trace['dipole'].append(dipole)
             self.trace['dm'].append(dm.copy())
-            chkf['t'].resize((chkf['t'].shape[0] + 1), axis=0)
-            chkf['dipole'].resize((chkf['dipole'].shape[0] + 1), axis=0)
-            chkf['dm'].resize((chkf['dm'].shape[0] + 1), axis=0)
-            chkf['t'][-1] = t
-            chkf['dipole'][-1] = np.asarray(dipole, dtype=np.complex128)
-            chkf['dm'][-1] = np.asarray(dm, dtype=np.complex128)
+            if chkf is not None:
+                chkf['t'].resize((chkf['t'].shape[0] + 1), axis=0)
+                chkf['dipole'].resize((chkf['dipole'].shape[0] + 1), axis=0)
+                chkf['dm'].resize((chkf['dm'].shape[0] + 1), axis=0)
+                chkf['t'][-1] = t
+                chkf['dipole'][-1] = np.asarray(dipole, dtype=np.complex128)
+                chkf['dm'][-1] = np.asarray(dm, dtype=np.complex128)
 
         
 
         if self.prop is None:
-            if self.prop_method == 'magnus2':
-                self.prop = magnus2.Magnus2Propagator(
+            if self.prop_method in RTSCF_PROP_METHODS:
+                self.prop = RTSCF_PROP_METHODS[self.prop_method](
                     h1e = self.mol.intor('int1e_kin') + self.mol.intor('int1e_nuc'),
                     get_veff = self._scf.get_veff,
                     dm = self._scf.make_rdm1(),
