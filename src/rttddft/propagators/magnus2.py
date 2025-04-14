@@ -47,18 +47,17 @@ class Magnus2Propagator:
         self.logger = logger
 
         self.stepcallback(self.time, self.dm)
-        
+
     def step(self):
-        F_m_half = self.fock_prev
+        F_m_dt = self.fock_prev
         F = self.fock
         converged = False
         nbuilds = 0
         dm_p_dt = np.copy(self.dm)
-        F_p_half = 2.0 * F - F_m_half
-        F_p_dt = F_p_half
+        F_p_half = 1.5 * F - 0.5 * F_m_dt
 
         while not converged:
-            
+
             W = (-1.0j * self.dt) * (F_p_half + self.v_ext(self.time + 0.5 * self.dt))
             expw = sla.expm(W)
 
@@ -66,9 +65,8 @@ class Magnus2Propagator:
 
             diff = np.linalg.norm(dm_p_dt_new - dm_p_dt)
 
-            dm_p_dt_old = dm_p_dt
             dm_p_dt = dm_p_dt_new
-            
+
             if diff < self.tol_interpol * self.dt:
                 converged = True
 
@@ -83,9 +81,8 @@ class Magnus2Propagator:
                 nbuilds += 1
                 F_p_half = 0.5 * (F + F_p_dt)
 
-
-            if self.logger is not None:
-                self.logger.debug(f'Magnus2: time {self.time:.3f}, {nbuilds} get_veff call(s), |drho| = {diff:1.3e}')
+        if self.logger is not None:
+            self.logger.debug(f'Magnus2: time {self.time:.3f}, {nbuilds} get_veff call(s), |drho| = {diff:1.3e}')
 
 
 
@@ -94,6 +91,3 @@ class Magnus2Propagator:
         self.fock = F_p_dt
         self.time = self.time + self.dt
         self.stepcallback(self.time, self.dm)
-
-
-
