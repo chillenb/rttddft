@@ -13,10 +13,11 @@ from pyscf.data import nist
 
 import h5py
 
+from rttddft.propagators.propstate import PropagatorState
 from rttddft.propagators import magnus2, mmut
 from rttddft.lib import BasisChanger
 
-RTSCF_PROP_METHODS = {'magnus2': magnus2.Magnus2Propagator, 'mmut': mmut.MMUTPropagator}
+RTSCF_PROP_METHODS = {'magnus2': magnus2.step_magnus2, 'mmut': mmut.step_mmut}
 
 def gpulse_efield(t0, peak, sigma, dir=(0,0,1.0), freq=0.0, phaseshift=0.0):
     """
@@ -118,16 +119,21 @@ class RTTDSCF(lib.StreamObject):
         self.prop_method = prop_method
 
     
-    def kernel(self, t_end, dt, t_start=0.0, efield=None):
+    def kernel(self, t_end, dt, t_start=0.0, efield=None, mo_basis=True):
+
+        if not mo_basis:
+            raise NotImplementedError("Real-time TDDFT in AO basis not implemented yet.")
+
         bc = BasisChanger(self._scf.get_ovlp(), self._scf.mo_coeff)
         log = logger.new_logger(self, self.verbose)
 
-        mo_dip = get_mo_dip(bc, self.mol)
+        with self.mol.with_common_origin((0.0, 0.0, 0.0)):
+            ao_dip = self.mol.intor_symmetric('int1e_r', comp=3)
+        mo_dip = bc.rotate_focklike(ao_dip)
         charges = self.mol.atom_charges()
         coords  = self.mol.atom_coords()
         nucl_dip = np.einsum('i,ix->x', charges, coords)
 
-        v_ext = make_vext_from_efield(efield, mo_dip)
         
         self.trace = {'t': [], 'dipole': [], 'dm': []}
 
@@ -145,7 +151,9 @@ class RTTDSCF(lib.StreamObject):
                                 maxshape=(None, self.mol.nao, self.mol.nao),
                                 chunks=(1, self.mol.nao, self.mol.nao))
 
-        def stepcallback(t, dm):
+        def stepcallback(state):
+            t = state.time
+            dm = state.dm
             dipole = -np.sum(mo_dip * dm[None,:,:].real, axis=(1,2))
             self.trace['t'].append(t)
             self.trace['dipole'].append(dipole)
@@ -162,21 +170,43 @@ class RTTDSCF(lib.StreamObject):
 
         if self.prop is None:
             if self.prop_method in RTSCF_PROP_METHODS:
-                self.prop = RTSCF_PROP_METHODS[self.prop_method](
-                    h1e = self.mol.intor('int1e_kin') + self.mol.intor('int1e_nuc'),
-                    get_veff = self._scf.get_veff,
-                    dm = self._scf.make_rdm1(),
-                    bc = bc,
-                    v_ext = v_ext,
-                    dt = dt,
-                    stepcallback=stepcallback,
-                    logger = log
-                )
+                self.prop = RTSCF_PROP_METHODS[self.prop_method]
             else:
                 raise ValueError(f'prop_method {self.prop_method} not recognized')
 
+        dm = self._scf.make_rdm1()
+        h1e = self.mol.intor('int1e_kin') + self.mol.intor('int1e_nuc')
+        get_veff = self._scf.get_veff
 
 
-        
+        if mo_basis:
+            v_ext = make_vext_from_efield(efield, mo_dip)
+            fock_init = bc.rotate_focklike(h1e + get_veff(dm=dm))
+            dm = bc.rotate_denslike(dm)
+        else:
+            v_ext = make_vext_from_efield(efield, ao_dip)
+            fock_init = h1e + get_veff(dm=dm)
+
+
+        prop_state = PropagatorState(
+                    dm = dm,
+                    dm_min_half = dm,
+                    fock = fock_init,
+                    fock_prev = fock_init,
+                    time = t_start,
+                    time_prev = t_start
+                    )
+
         for _ in range(nsteps):
-            self.prop.step()
+            prop_state = self.prop(
+                state = prop_state,
+                h1e = h1e,
+                v_ext = v_ext,
+                get_veff = get_veff,
+                dt = dt,
+                conv_tol = 1e-5,
+                mo_basis = mo_basis,
+                bc = bc,
+                logger = log,
+                callback = stepcallback
+            )

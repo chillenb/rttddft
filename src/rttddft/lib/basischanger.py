@@ -171,3 +171,124 @@ class BasisChanger:
         C = self.C @ other.C
         return BasisChanger(S, C, to_orthonormal=other.to_orthonormal)
     
+
+class KBasisChanger:
+    """Basis change helper class.
+    
+    Example:
+        >>> from pyscf import gto, scf
+        >>> import numpy as np
+        >>> from rttddft.lib import BasisChanger
+        >>> mol = gto.M(atom="C 0 0 0; O 0 0 1.128", basis='ccpvdz', verbose=5)
+        >>> mf = scf.RHF(mol)
+        >>> mf.kernel()
+        >>> C_mo_ao = mf.mo_coeff
+        >>> fock = mf.get_fock(dm=mydensity)
+        >>> S_ao = mol.intor('int1e_ovlp')
+        >>> ao2mo = BasisChanger(S_ao, C_mo_ao)
+        >>> fock_mo = ao2mo.rotate_focklike(fock)        
+    """
+    def __init__(self, S, C, to_orthonormal=False, nkpts=None):
+        """
+        Construct an instance of the basis change helper class.
+
+        Args:
+            S (np.ndarray): overlap matrix in original basis
+            C (np.ndarray): transformation matrix.
+            
+            The columns of C are the new basis vectors expressed in the original basis.
+            
+        """
+        if nkpts is None:
+            if S.ndim == 3:
+                nkpts = S.shape[0]
+            else:
+                raise ValueError('k-point basis changer requires S.ndim == 3')
+        self.nkpts = nkpts
+        self.S = S
+        self.C = C
+        self.to_orthonormal = to_orthonormal
+
+        self.Cinv = np.zeros_like(C)
+        for k in range(nkpts):
+            if to_orthonormal:
+                self.Cinv[k] = np.dot(C[k].conj().T, S[k])
+            else:
+                self.Cinv[k] = np.linalg.inv(C[k])
+        
+    def rotate_focklike(self, kmat):
+        kmat_transformed = np.zeros_like(kmat)
+        for k in range(self.nkpts):
+            kmat_transformed[k] = chaindot(self.C[k].conj().T, kmat[k], self.C[k])
+        return kmat_transformed
+
+    def rotate_denslike(self, kmat):
+        kmat_transformed = np.zeros_like(kmat)
+        for k in range(self.nkpts):
+            kmat_transformed[k] = chaindot(self.Cinv[k], kmat[k], self.Cinv[k].conj().T)
+        return kmat_transformed
+
+
+    def rotate_oplike(self, kmat):
+        kmat_transformed = np.zeros_like(kmat)
+        for k in range(self.nkpts):
+            kmat_transformed[k] = chaindot(self.Cinv[k], kmat[k], self.C[k])
+        return kmat_transformed
+    
+    def rev_focklike(self, kmat):
+        kmat = np.zeros_like(kmat)
+        for k in range(self.nkpts):
+            kmat[k] = chaindot(self.Cinv[k].conj().T, kmat[k], self.Cinv[k])
+        return kmat
+
+    def rev_denslike(self, kmat):
+        kmat = np.zeros_like(kmat)
+        for k in range(self.nkpts):
+            kmat[k] = chaindot(self.C[k], kmat[k], self.C[k].conj().T)
+        return kmat
+
+    def rev_oplike(self, kmat):
+        k_transformed = np.zeros_like(kmat)
+        for k in range(self.nkpts):
+            k_transformed[k] = chaindot(self.C[k], kmat[k], self.Cinv[k])
+        return k_transformed
+
+    def transform(self, kmat, mat_type='focklike', rev=False):
+        if not rev:
+            if mat_type == 'focklike':
+                return self.rotate_focklike(kmat)
+            elif mat_type == 'denslike':
+                return self.rotate_denslike(kmat)
+            elif mat_type == 'oplike':
+                return self.rotate_oplike(kmat)
+            else:
+                raise ValueError(f'Unknown mat_type {mat_type}')
+        else:
+            if mat_type == 'focklike':
+                return self.rev_focklike(kmat)
+            elif mat_type == 'denslike':
+                return self.rev_denslike(kmat)
+            elif mat_type == 'oplike':
+                return self.rev_oplike(kmat)
+            else:
+                raise ValueError(f'Unknown mat_type {mat_type}')
+        
+    
+    def inverse(self):
+        if self.to_orthonormal:
+            S_tilde = np.zeros_like(self.S)
+            for k in range(self.nkpts):
+                S_tilde[k] = np.eye(self.S.shape[1])
+        else:
+            S_tilde = self.rotate_focklike(self.S)
+
+        if np.all(np.linalg.norm(self.S - np.eye(self.S.shape[0]), axis=0) < 1.0e-8):
+            return KBasisChanger(S_tilde, self.Cinv, to_orthonormal=True)
+        return KBasisChanger(S_tilde, self.Cinv)
+    
+    def chain(self, other):
+        S = self.S
+        C = np.zeros_like(self.C)
+        for k in range(self.nkpts):
+            C[k] = self.C[k] @ other.C[k]
+        return KBasisChanger(S, C, to_orthonormal=other.to_orthonormal)

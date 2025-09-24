@@ -1,86 +1,101 @@
-from pyscf import lib
 import numpy as np
 
 import scipy.linalg as sla
+from rttddft.propagators.propstate import PropagatorState
 
-def donothing(*args, **kwargs):
-    pass
+def step_mmut(state, h1e, v_ext, get_veff, dt, conv_tol=1e-5, mo_basis=False, bc=None, logger=None, callback=None):
+    """Perform a single time step with MMUT.
 
+    Parameters
+    ----------
+    state : PropagatorState
+        Current system state.
+    h1e : np.ndarray
+        Time-independent part of the one-electron Hamiltonian.
+    v_ext : function
+        Function returning the external potential at a given time.
+    get_veff : function
+        Function mapping the density matrix to the effective potential.
+    dt : float
+        Time step length
+    conv_tol : float, by default 1e-5
+        Not used.
+    mo_basis : bool, optional
+        Whether to use the molecular orbital basis, by default False
+    bc : BasisChanger, optional
+        basis changer for MO basis; only needed if mo_basis is True, by default None
+    logger : pyscf.lib.logger, optional
+        logger object, by default None
+    callback : function, optional
+        function to call after each time step, by default None.
+        Invoked as callback(new_state), where new_state is of type PropagatorState.
 
-class MMUTPropagator:
-    def __init__(self,
-                 h1e,
-                 dm,
-                 bc,
-                 get_veff,
-                 v_ext,
-                 all_mo_basis = False,
-                 fock_init = None,
-                 stepcallback = donothing,
-                 starttime = 0.0,
-                 dt = 0.1,
-                 logger = None):
+    Returns
+    -------
+    PropagatorState
+        New system state after the time step.
+    """
+    F = state.fock
+    dm = state.dm
+    nbuilds = 0
+    t = state.time
 
-        self.h1e = h1e
-        self.get_veff = get_veff
-        self.bc = bc
-        self.time = starttime
-        self.dt = dt
-        self.stepcallback = stepcallback
-        self.v_ext = v_ext
-        self.all_mo_basis = all_mo_basis
+    if dm.ndim > 2:
+        nkpts = dm.shape[0]
+        is_kpoint = True
+    else:
+        nkpts = 0
+        is_kpoint = False
 
-        if not all_mo_basis:
-            fock_ao = fock_init if fock_init is not None else h1e + get_veff(dm=dm)
-            self.fock = bc.rotate_focklike(fock_ao)
-            self.dm = bc.rotate_denslike(dm)
-            self.dm_min_half = self.dm.copy()
-        else:
-            self.fock = fock_init if fock_init is not None else h1e + get_veff(dm=dm)
-            self.dm = dm
-            self.dm_min_half = self.dm.copy()
+    W = F + v_ext(t)
 
-        self.logger = logger
+    if not is_kpoint:
+        evs, evecs = sla.eigh(W)
+        expw = evecs @ (np.exp(-1.0j * dt * evs)[:, None] * evecs.conj().T)
+        expw_half = evecs @ (np.exp(-0.5j * dt * evs)[:, None] * evecs.conj().T)
+    else:
+        expw = np.zeros_like(W)
+        expw_half = np.zeros_like(W)
+        for k in range(nkpts):
+            evs, evecs = sla.eigh(W[k])
+            expw[k] = evecs @ (np.exp(-1.0j * dt * evs)[:, None] * evecs.conj().T)
+            expw_half[k] = evecs @ (np.exp(-0.5j * dt * evs)[:, None] * evecs.conj().T)
 
-        self.stepcallback(self.time, self.dm)
-        
-    def step(self):
-        F = self.fock
-        nbuilds = 0
+    if state.dm_min_half is None:
+        dm_min_half = state.dm
+    else:
+        dm_min_half = state.dm_min_half
 
-        Ft = F + self.v_ext(self.time)
-        evs, evecs = sla.eigh(Ft)
-
-        expw = evecs @ (np.exp(-1.0j * self.dt * evs)[:, None] * evecs.conj().T)
-        expw_half = evecs @ (np.exp(-0.5j * self.dt * evs)[:, None] * evecs.conj().T)
-
-
-        dm_p_half = np.linalg.multi_dot([expw, self.dm_min_half, expw.conj().T])
-
-        dm_p_dt = np.linalg.multi_dot([expw_half, dm_p_half, expw_half.conj().T])
-
-
-
-        if not self.all_mo_basis:
-            dm_p_dt_ao = self.bc.rev_denslike(dm_p_dt)
-            F_p_dt_ao = self.h1e + self.get_veff(dm=dm_p_dt_ao)
-            F_p_dt = self.bc.rotate_focklike(F_p_dt_ao)
-        else:
-            F_p_dt = self.h1e + self.get_veff(dm=dm_p_dt)
-
-        nbuilds += 1
-
-
-        if self.logger is not None:
-            self.logger.debug(f'MMUT: time {self.time:.3f}')
+    # Should work for both k-point and non-k-point cases.
+    dm_p_half = expw @ dm_min_half @ expw.conj().T
+    dm_p_dt = expw_half @ dm_p_half @ expw_half.conj().T
 
 
+    if mo_basis:
+        assert bc is not None, "BasisChanger 'bc' must be provided to define the MO basis"
+        dm_p_dt_ao = bc.rev_denslike(dm_p_dt)
+        F_p_dt_ao = h1e + get_veff(dm=dm_p_dt_ao)
+        F_p_dt = bc.rotate_focklike(F_p_dt_ao)
+    else:
+        F_p_dt = h1e + get_veff(dm=dm_p_dt)
 
-        self.dm = dm_p_dt
-        self.dm_min_half = dm_p_half
-        self.fock = F_p_dt
-        self.time = self.time + self.dt
-        self.stepcallback(self.time, self.dm)
+    nbuilds += 1
 
 
+    if logger is not None:
+        logger.debug(f'MMUT: time {t+dt:.3f}')
+
+
+    new_state = PropagatorState(
+        dm=dm_p_dt,
+        dm_min_half=dm_p_half,
+        fock=F_p_dt,
+        fock_prev=F,
+        time=t + dt,
+        time_prev=t
+    )
+
+    if callback:
+        callback(new_state)
+    return new_state
 
