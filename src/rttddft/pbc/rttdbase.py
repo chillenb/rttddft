@@ -98,7 +98,10 @@ def make_vext_velgauge(cell, afield, kpts, h1e_ipovlp, bc=None):
         qA = -afield(t)
         qA_dot_p = np.einsum('i,kixy->kxy', qA, h1e_ipovlp) * (-1.0j)
         qA_sqr = np.dot(qA, qA)
-        pp_nl=get_pp_nl_velgauge(cell, A_over_c=qA*0, kpts=kpts)
+        if cell.pseudo:
+            pp_nl=get_pp_nl_velgauge(cell, A_over_c=qA*0, kpts=kpts)
+        else:
+            pp_nl=0.0
         nao = cell.nao_nr()
         vext_ao = (qA_sqr * np.eye(nao))[None, :, :] - 2.0 * qA_dot_p + pp_nl
         if bc is not None:
@@ -111,12 +114,11 @@ def get_electronic_velocity(cell, A, kpts, h1e_ipovlp, bc=None, dm=None):
     qA = -1.0 * A
     if cell.pseudo:
         r_vnl_commutator = get_pp_nl_velgauge_commutator(cell, A_over_c=qA, kpts=kpts)
-    else:
-        r_vnl_commutator = 0.0
     velocity = np.zeros(3, dtype=np.complex128)
     for k in range(len(kpts)):
         velocity += np.einsum('ixy,xy->i', h1e_ipovlp[k], dm[k]) / (1.0j)
-        velocity += np.einsum('ixy,xy->i', r_vnl_commutator[k], dm[k]) / (1.0j)
+        if cell.pseudo:
+            velocity += np.einsum('ixy,xy->i', r_vnl_commutator[k], dm[k]) / (1.0j)
         velocity -= qA * np.trace(dm[k])
     return velocity
 
