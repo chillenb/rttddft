@@ -67,8 +67,15 @@ def step_mmut(state, h1e, v_ext, get_veff, dt, conv_tol=1e-5, mo_basis=False, bc
         dm_min_half = state.dm_min_half
 
     # Should work for both k-point and non-k-point cases.
-    dm_p_half = expw @ dm_min_half @ expw.conj().T
-    dm_p_dt = expw_half @ dm_p_half @ expw_half.conj().T
+    if not is_kpoint:
+        dm_p_half = expw @ dm_min_half @ expw.conj().T
+        dm_p_dt = expw_half @ dm_p_half @ expw_half.conj().T
+    else:
+        dm_p_half = np.zeros_like(dm)
+        dm_p_dt = np.zeros_like(dm)
+        for k in range(nkpts):
+            dm_p_half[k] = expw[k] @ dm_min_half[k] @ expw[k].conj().T
+            dm_p_dt[k] = expw_half[k] @ dm_p_half[k] @ expw_half[k].conj().T
 
 
     if mo_basis:

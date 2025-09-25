@@ -236,22 +236,22 @@ class KBasisChanger:
         return kmat_transformed
     
     def rev_focklike(self, kmat):
-        kmat = np.zeros_like(kmat)
+        kmat_transformed = np.zeros_like(kmat)
         for k in range(self.nkpts):
-            kmat[k] = chaindot(self.Cinv[k].conj().T, kmat[k], self.Cinv[k])
-        return kmat
+            kmat_transformed[k] = chaindot(self.Cinv[k].conj().T, kmat[k], self.Cinv[k])
+        return kmat_transformed
 
     def rev_denslike(self, kmat):
-        kmat = np.zeros_like(kmat)
+        kmat_transformed = np.zeros_like(kmat)
         for k in range(self.nkpts):
-            kmat[k] = chaindot(self.C[k], kmat[k], self.C[k].conj().T)
-        return kmat
+            kmat_transformed[k] = chaindot(self.C[k], kmat[k], self.C[k].conj().T)
+        return kmat_transformed
 
     def rev_oplike(self, kmat):
-        k_transformed = np.zeros_like(kmat)
+        kmat_transformed = np.zeros_like(kmat)
         for k in range(self.nkpts):
-            k_transformed[k] = chaindot(self.C[k], kmat[k], self.Cinv[k])
-        return k_transformed
+            kmat_transformed[k] = chaindot(self.C[k], kmat[k], self.Cinv[k])
+        return kmat_transformed
 
     def transform(self, kmat, mat_type='focklike', rev=False):
         if not rev:
