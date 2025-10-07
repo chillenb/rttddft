@@ -7,7 +7,7 @@ from pyscf.pbc.gto import pseudo
 
 from pyscf.pbc.df import gdf_builder, aft, rsdf_builder
 from pyscf.pbc.df import rsdf
-from pyscf.pbc.gto.pseudo.ppnl_velgauge import get_pp_nl_velgauge, get_pp_nl_velgauge_commutator
+from pyscf.pbc.gto.pseudo.ppnl_velgauge import VelGaugePPNLHelper, get_pp_nl_velgauge, get_pp_nl_velgauge_commutator
 from pyscf import __config__
 
 
@@ -92,16 +92,16 @@ def get_pseudopotential_local_part(mf, kpts=None):
         vpp_loc = vpp_loc[0]
     return vpp_loc
 
-def make_vext_velgauge(cell, afield, kpts, h1e_ipovlp, bc=None):
+def make_vext_velgauge(cell, afield, kpts, h1e_ipovlp, bc=None, vgppnl_helper=None):
     def v_ext(t):
         # q is -1 for electrons
         qA = -afield(t)
         qA_dot_p = np.einsum('i,kixy->kxy', qA, h1e_ipovlp) * (-1.0j)
         qA_sqr = np.dot(qA, qA)
         if cell.pseudo:
-            pp_nl=get_pp_nl_velgauge(cell, A_over_c=qA*0, kpts=kpts)
+            pp_nl, _ = get_pp_nl_velgauge(cell, A_over_c=qA*0, kpts=kpts, vgppnl_helper=vgppnl_helper)
         else:
-            pp_nl=0.0
+            pp_nl = 0.0
         nao = cell.nao_nr()
         vext_ao = (qA_sqr * np.eye(nao))[None, :, :] - 2.0 * qA_dot_p + pp_nl
         if bc is not None:
@@ -110,10 +110,10 @@ def make_vext_velgauge(cell, afield, kpts, h1e_ipovlp, bc=None):
         return vext_ao
     return v_ext
 
-def get_electronic_velocity(cell, A, kpts, h1e_ipovlp, bc=None, dm=None):
+def get_electronic_velocity(cell, A, kpts, h1e_ipovlp, bc=None, dm=None, vgppnl_helper=None):
     qA = -1.0 * A
     if cell.pseudo:
-        r_vnl_commutator = get_pp_nl_velgauge_commutator(cell, A_over_c=qA, kpts=kpts)
+        r_vnl_commutator, _ = get_pp_nl_velgauge_commutator(cell, A_over_c=qA, kpts=kpts, vgppnl_helper=vgppnl_helper)
     velocity = np.zeros(3, dtype=np.complex128)
     for k in range(len(kpts)):
         velocity += np.einsum('ixy,xy->i', h1e_ipovlp[k], dm[k]) / (1.0j)
@@ -123,7 +123,7 @@ def get_electronic_velocity(cell, A, kpts, h1e_ipovlp, bc=None, dm=None):
     return velocity
 
 class KRTTDSCF(rttdbase.RTTDSCF):
-    _keys = {'cell', 'h1e_nuc_local', 'h1e_kin', 'h1e_ipovlp'}
+    _keys = {'cell', 'h1e_nuc_local', 'h1e_kin', 'h1e_ipovlp', 'vgppnl_helper'}
 
     def __init__(self, mf, prop_method='magnus2', chkfile = None):
         super().__init__(mf, prop_method=prop_method, chkfile=chkfile)
@@ -134,6 +134,7 @@ class KRTTDSCF(rttdbase.RTTDSCF):
         self.h1e_kin = None
         self.h1e_nuc_local = None
         self.h1e_ipovlp = None
+        self.vgppnl_helper = None
 
     def init_onebody_integrals(self):
         """Cache one-body integrals: kinetic, nuclear (local part of pseudopotentials if applicable),
@@ -148,6 +149,9 @@ class KRTTDSCF(rttdbase.RTTDSCF):
             self.h1e_nuc_local = mf.with_df.get_nuc(kpts)
         self.h1e_kin = np.asarray(cell.pbc_intor('int1e_kin', comp=1, hermi=1, kpts=kpts))
         self.h1e_ipovlp = np.asarray(cell.pbc_intor('int1e_ipovlp', comp=3, hermi=0, kpts=kpts))
+        if cell.pseudo:
+            self.vgppnl_helper = VelGaugePPNLHelper(cell, kpts)
+            self.vgppnl_helper.build()
 
 
     def kernel(self, t_end, dt, t_start=0.0, efield=None, mo_basis=True, afield=None):
@@ -188,7 +192,7 @@ class KRTTDSCF(rttdbase.RTTDSCF):
             t = state.time
             dm = state.dm
             dmao = bc.rev_denslike(dm)
-            velocity = get_electronic_velocity(self.cell, afield(t), self._scf.kpts, self.h1e_ipovlp, dm=dmao)
+            velocity = get_electronic_velocity(self.cell, afield(t), self._scf.kpts, self.h1e_ipovlp, dm=dmao, vgppnl_helper=self.vgppnl_helper)
             self.trace['t'].append(t)
             self.trace['dipole'].append(-velocity)
             self.trace['dm'].append(dm.copy())
@@ -215,7 +219,7 @@ class KRTTDSCF(rttdbase.RTTDSCF):
 
 
         if mo_basis:
-            v_ext = make_vext_velgauge(self.cell, afield, self._scf.kpts, self.h1e_ipovlp, bc=bc)
+            v_ext = make_vext_velgauge(self.cell, afield, self._scf.kpts, self.h1e_ipovlp, bc=bc, vgppnl_helper=self.vgppnl_helper)
             fock_init = bc.rotate_focklike(h1e + get_veff(dm=dm))
             dm = bc.rotate_denslike(dm)
         else:
