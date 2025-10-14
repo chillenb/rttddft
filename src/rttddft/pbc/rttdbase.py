@@ -96,7 +96,7 @@ def make_vext_velgauge(cell, afield, kpts, h1e_ipovlp, bc=None, vgppnl_helper=No
     def v_ext(t):
         # q is -1 for electrons
         qA = -afield(t)
-        qA_dot_p = np.einsum('i,kixy->kxy', qA, h1e_ipovlp) * (-1.0j)
+        qA_dot_p = np.einsum('i,kixy->kxy', qA, h1e_ipovlp) * (1.0j)
         qA_sqr = np.dot(qA, qA)
         if cell.pseudo:
             pp_nl, _ = get_pp_nl_velgauge(cell, A_over_c=qA*0, kpts=kpts, vgppnl_helper=vgppnl_helper)
@@ -116,7 +116,7 @@ def get_electronic_velocity(cell, A, kpts, h1e_ipovlp, bc=None, dm=None, vgppnl_
         r_vnl_commutator, _ = get_pp_nl_velgauge_commutator(cell, A_over_c=qA, kpts=kpts, vgppnl_helper=vgppnl_helper)
     velocity = np.zeros(3, dtype=np.complex128)
     for k in range(len(kpts)):
-        velocity += np.einsum('ixy,xy->i', h1e_ipovlp[k], dm[k]) / (1.0j)
+        velocity += np.einsum('ixy,xy->i', h1e_ipovlp[k], dm[k]) * (1.0j)
         if cell.pseudo:
             velocity += np.einsum('ixy,xy->i', r_vnl_commutator[k], dm[k]) / (1.0j)
         velocity -= qA * np.trace(dm[k])
