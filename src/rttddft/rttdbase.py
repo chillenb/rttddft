@@ -121,14 +121,16 @@ class RTTDSCF(lib.StreamObject):
     
     def kernel(self, t_end, dt, t_start=0.0, efield=None, mo_basis=True):
 
-        if not mo_basis:
-            raise NotImplementedError("Real-time TDDFT in AO basis not implemented yet.")
+        # if not mo_basis:
+        #     raise NotImplementedError("Real-time TDDFT in AO basis not implemented yet.")
 
         bc = BasisChanger(self._scf.get_ovlp(), self._scf.mo_coeff)
         log = logger.new_logger(self, self.verbose)
 
         with self.mol.with_common_origin((0.0, 0.0, 0.0)):
             ao_dip = self.mol.intor_symmetric('int1e_r', comp=3)
+
+        S = self._scf.get_ovlp()
         mo_dip = bc.rotate_focklike(ao_dip)
         charges = self.mol.atom_charges()
         coords  = self.mol.atom_coords()
@@ -154,7 +156,10 @@ class RTTDSCF(lib.StreamObject):
         def stepcallback(state):
             t = state.time
             dm = state.dm
-            dipole = -np.sum(mo_dip * dm[None,:,:].real, axis=(1,2))
+            if mo_basis:
+                dipole = -np.sum(mo_dip * dm[None,:,:].real, axis=(1,2))
+            else:
+                dipole = -np.sum(ao_dip * dm[None,:,:].real, axis=(1,2))
             self.trace['t'].append(t)
             self.trace['dipole'].append(dipole)
             self.trace['dm'].append(dm.copy())
@@ -202,6 +207,7 @@ class RTTDSCF(lib.StreamObject):
                 state = prop_state,
                 h1e = h1e,
                 v_ext = v_ext,
+                S = S,
                 get_veff = get_veff,
                 dt = dt,
                 conv_tol = 1e-5,

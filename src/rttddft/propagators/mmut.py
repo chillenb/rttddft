@@ -3,7 +3,7 @@ import numpy as np
 import scipy.linalg as sla
 from rttddft.propagators.propstate import PropagatorState
 
-def step_mmut(state, h1e, v_ext, get_veff, dt, conv_tol=1e-5, mo_basis=False, bc=None, logger=None, callback=None):
+def step_mmut(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=False, bc=None, logger=None, callback=None):
     """Perform a single time step with MMUT.
 
     Parameters
@@ -50,16 +50,28 @@ def step_mmut(state, h1e, v_ext, get_veff, dt, conv_tol=1e-5, mo_basis=False, bc
     W = F + v_ext(t)
 
     if not is_kpoint:
-        evs, evecs = sla.eigh(W)
-        expw = evecs @ (np.exp(-1.0j * dt * evs)[:, None] * evecs.conj().T)
-        expw_half = evecs @ (np.exp(-0.5j * dt * evs)[:, None] * evecs.conj().T)
+        if mo_basis:
+            evs, evecs = sla.eigh(W)
+            expw = evecs @ (np.exp(-1.0j * dt * evs)[:, None] * evecs.conj().T)
+            expw_half = evecs @ (np.exp(-0.5j * dt * evs)[:, None] * evecs.conj().T)
+        else:
+            evs, C2 = sla.eigh(W, b=S)
+            C2inv = sla.inv(C2)
+            expw = C2 @ (np.exp(-1.0j * dt * evs)[:, None] * C2inv)
+            expw_half = C2 @ (np.exp(-0.5j * dt * evs)[:, None] * C2inv)
     else:
         expw = np.zeros_like(W)
         expw_half = np.zeros_like(W)
         for k in range(nkpts):
-            evs, evecs = sla.eigh(W[k])
-            expw[k] = evecs @ (np.exp(-1.0j * dt * evs)[:, None] * evecs.conj().T)
-            expw_half[k] = evecs @ (np.exp(-0.5j * dt * evs)[:, None] * evecs.conj().T)
+            if mo_basis:
+                evs, evecs = sla.eigh(W[k])
+                expw[k] = evecs @ (np.exp(-1.0j * dt * evs)[:, None] * evecs.conj().T)
+                expw_half[k] = evecs @ (np.exp(-0.5j * dt * evs)[:, None] * evecs.conj().T)
+            else:
+                evs, C2 = sla.eigh(W[k], b=S[k])
+                C2inv = sla.inv(C2)
+                expw[k] = C2 @ (np.exp(-1.0j * dt * evs)[:, None] * C2inv)
+                expw_half[k] = C2 @ (np.exp(-0.5j * dt * evs)[:, None] * C2inv)
 
     if state.dm_min_half is None:
         dm_min_half = state.dm

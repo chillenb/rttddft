@@ -156,9 +156,6 @@ class KRTTDSCF(rttdbase.RTTDSCF):
 
     def kernel(self, t_end, dt, t_start=0.0, efield=None, mo_basis=True, afield=None):
 
-        if not mo_basis:
-            raise NotImplementedError("Real-time TDDFT in AO basis not implemented yet.")
-
         self.init_onebody_integrals()
 
         bc = KBasisChanger(self._scf.get_ovlp(), self._scf.mo_coeff, to_orthonormal=True, nkpts=len(self._scf.kpts))
@@ -191,7 +188,10 @@ class KRTTDSCF(rttdbase.RTTDSCF):
         def stepcallback(state):
             t = state.time
             dm = state.dm
-            dmao = bc.rev_denslike(dm)
+            if mo_basis:
+                dmao = bc.rev_denslike(dm)
+            else:
+                dmao = dm
             velocity = get_electronic_velocity(self.cell, afield(t), self._scf.kpts, self.h1e_ipovlp, dm=dmao, vgppnl_helper=self.vgppnl_helper)
             self.trace['t'].append(t)
             self.trace['dipole'].append(-velocity)
@@ -214,6 +214,7 @@ class KRTTDSCF(rttdbase.RTTDSCF):
 
         dm = self._scf.make_rdm1()
         h1e = self.h1e_nuc_local + self.h1e_kin
+        S = self._scf.get_ovlp()
         get_veff = self._scf.get_veff
 
 
@@ -223,8 +224,8 @@ class KRTTDSCF(rttdbase.RTTDSCF):
             fock_init = bc.rotate_focklike(h1e + get_veff(dm=dm))
             dm = bc.rotate_denslike(dm)
         else:
-            raise NotImplementedError("Real-time TDDFT in AO basis not implemented yet.")
-
+            v_ext = make_vext_velgauge(self.cell, afield, self._scf.kpts, self.h1e_ipovlp, vgppnl_helper=self.vgppnl_helper)
+            fock_init = h1e + get_veff(dm=dm)
 
         prop_state = PropagatorState(
                     dm = dm,
@@ -240,6 +241,7 @@ class KRTTDSCF(rttdbase.RTTDSCF):
                 state = prop_state,
                 h1e = h1e,
                 v_ext = v_ext,
+                S = S,
                 get_veff = get_veff,
                 dt = dt,
                 conv_tol = 1e-5,

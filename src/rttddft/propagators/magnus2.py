@@ -3,7 +3,7 @@ import numpy as np
 import scipy.linalg as sla
 from rttddft.propagators.propstate import PropagatorState
 
-def step_magnus2(state, h1e, v_ext, get_veff, dt, conv_tol=1e-5, mo_basis=False, bc=None, logger=None, callback=None):
+def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=False, bc=None, logger=None, callback=None):
     """Perform a single predictor/corrector time step using the Magnus expansion.
 
     Parameters
@@ -58,19 +58,30 @@ def step_magnus2(state, h1e, v_ext, get_veff, dt, conv_tol=1e-5, mo_basis=False,
 
     while not converged:
 
-        W = (-1.0j * dt) * (F_p_half + v_ext_half)
-
+        W = (F_p_half + v_ext_half)
         # k-point case
         # todo: MPI parallelization
         if is_kpoint:
             dm_p_dt_new = np.zeros_like(dm)
             for k in range(nkpts):
-                expw_k = sla.expm(W[k])
-                dm_p_dt_new[k] = np.linalg.multi_dot([expw_k, dm[k], expw_k.conj().T])
+                if mo_basis:
+                    evs, evecs = sla.eigh(W[k])
+                    expw_k = evecs @ (np.exp(-1.0j * dt * evs)[:, None] * evecs.conj().T)
+                else:
+                    evs, C2 = sla.eigh(W[k], b=S[k])
+                    C2inv = sla.inv(C2)
+                    expw_k = C2 @ (np.exp(-1.0j * dt * evs)[:, None] * C2inv)
+                dm_p_dt_new[k] = expw_k @ dm[k] @ expw_k.conj().T
 
         else:
-            expw = sla.expm(W)
-            dm_p_dt_new = np.linalg.multi_dot([expw, dm, expw.conj().T])
+            if mo_basis:
+                evs, evecs = sla.eigh(W)
+                expw = evecs @ (np.exp(-1.0j * dt * evs)[:, None] * evecs.conj().T)
+            else:
+                evs, C2 = sla.eigh(W, b=S)
+                C2inv = sla.inv(C2)
+                expw = C2 @ (np.exp(-1.0j * dt * evs)[:, None] * C2inv)
+            dm_p_dt_new = expw @ dm @ expw.conj().T
 
         diff = np.linalg.norm(dm_p_dt_new - dm_p_dt)
 
