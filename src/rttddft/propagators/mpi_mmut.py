@@ -3,6 +3,15 @@ import numpy as np
 import scipy.linalg as sla
 from rttddft.propagators.propstate import PropagatorState
 
+from mpi4py import MPI
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
+size = comm.Get_size()
+
+from pyscf.pbc.mpitools.mpi_helper import allreduce_inplace_contiguous
+
+
+
 def step_mmut(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=False, bc=None, logger=None, callback=None):
     """Perform a single time step with MMUT.
 
@@ -43,6 +52,7 @@ def step_mmut(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=False,
     if dm.ndim > 2:
         nkpts = dm.shape[0]
         is_kpoint = True
+        my_kpt_inds = np.arange(rank, nkpts, size)
     else:
         nkpts = 0
         is_kpoint = False
@@ -62,7 +72,7 @@ def step_mmut(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=False,
     else:
         expw = np.zeros_like(W)
         expw_half = np.zeros_like(W)
-        for k in range(nkpts):
+        for k in my_kpt_inds:
             if mo_basis:
                 evs, evecs = sla.eigh(W[k])
                 expw[k] = evecs @ (np.exp(-1.0j * dt * evs)[:, None] * evecs.conj().T)
@@ -72,31 +82,34 @@ def step_mmut(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=False,
                 C2inv = sla.inv(C2)
                 expw[k] = C2 @ (np.exp(-1.0j * dt * evs)[:, None] * C2inv)
                 expw_half[k] = C2 @ (np.exp(-0.5j * dt * evs)[:, None] * C2inv)
+        allreduce_inplace_contiguous(comm, expw)
+        allreduce_inplace_contiguous(comm, expw_half)
 
     if state.dm_min_half is None:
         dm_min_half = state.dm
     else:
         dm_min_half = state.dm_min_half
 
-    # Should work for both k-point and non-k-point cases.
     if not is_kpoint:
         dm_p_half = expw @ dm_min_half @ expw.conj().T
         dm_p_dt = expw_half @ dm_p_half @ expw_half.conj().T
     else:
         dm_p_half = np.zeros_like(dm)
         dm_p_dt = np.zeros_like(dm)
-        for k in range(nkpts):
+        for k in my_kpt_inds:
             dm_p_half[k] = expw[k] @ dm_min_half[k] @ expw[k].conj().T
             dm_p_dt[k] = expw_half[k] @ dm_p_half[k] @ expw_half[k].conj().T
+        allreduce_inplace_contiguous(comm, dm_p_half)
+        allreduce_inplace_contiguous(comm, dm_p_dt)
 
 
     if mo_basis:
         assert bc is not None, "BasisChanger 'bc' must be provided to define the MO basis"
         dm_p_dt_ao = bc.rev_denslike(dm_p_dt)
-        F_p_dt_ao = h1e + get_veff(dm=dm_p_dt_ao)
+        F_p_dt_ao = h1e + get_veff(dm_p_dt_ao)
         F_p_dt = bc.rotate_focklike(F_p_dt_ao)
     else:
-        F_p_dt = h1e + get_veff(dm=dm_p_dt)
+        F_p_dt = h1e + get_veff(dm_p_dt)
 
     nbuilds += 1
 
