@@ -107,10 +107,10 @@ def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=Fal
             if mo_basis:
                 assert bc is not None, "BasisChanger 'bc' must be provided to define the MO basis"
                 dm_p_dt_ao = bc.rev_denslike(dm_p_dt)
-                F_p_dt_ao = h1e + get_veff(dm=dm_p_dt_ao)
+                F_p_dt_ao = h1e + get_veff(dm_p_dt_ao)
                 F_p_dt = bc.rotate_focklike(F_p_dt_ao)
             else:
-                F_p_dt = h1e + get_veff(dm=dm_p_dt)
+                F_p_dt = h1e + get_veff(dm_p_dt)
 
             nbuilds += 1
             F_p_half = 0.5 * (F + F_p_dt)
