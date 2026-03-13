@@ -3,7 +3,6 @@ from pyscf import lib
 from pyscf.lib import logger
 from pyscf.pbc import scf
 from pyscf.pbc import df as pbcdf
-from pyscf.pbc import mpi_df as pbc_mpi_df
 from pyscf.pbc.gto import pseudo
 
 from pyscf.pbc.df import gdf_builder, aft, rsdf_builder
@@ -94,7 +93,7 @@ def get_pseudopotential_local_part(mf, kpts=None):
         t0 = (logger.process_clock(), logger.perf_counter())
         vpp_loc_part1 = nuc_builder.get_pp_loc_part1()
         t1 = logger.timer_debug1(nuc_builder, 'get_pp_loc_part1', *t0)
-    elif isinstance(with_df, pbc_mpi_df.MPIGDF):
+    elif isinstance(with_df, pbcdf.mpi_df.MPIGDF):
         nuc_builder = rsdf_builder._RSNucBuilder(cell, kpts).build()
         t0 = (logger.process_clock(), logger.perf_counter())
         vpp_loc_part1 = nuc_builder.get_pp_loc_part1()
