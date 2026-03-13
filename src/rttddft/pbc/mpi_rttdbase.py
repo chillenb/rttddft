@@ -224,7 +224,7 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
         # nucl_dip = np.einsum('i,ix->x', charges, coords)
 
         
-        self.trace = {'t': [], 'dipole': [], 'dm': []}
+        self.trace = {'t': [], 'velocity': [], 'dm': []}
 
         if t_end <= t_start:
             raise ValueError('t_end must be greater than t_start')
