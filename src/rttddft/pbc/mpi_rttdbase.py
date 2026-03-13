@@ -276,11 +276,11 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
 
         if mo_basis:
             v_ext = make_vext_velgauge(self.cell, afield, self._scf.kpts, self.h1e_ipovlp, bc=bc, vgppnl_helper=self.vgppnl_helper)
-            fock_init = bc.rotate_focklike(h1e + get_veff(dm=dm))
+            fock_init = bc.rotate_focklike(h1e + get_veff(dm_kpts=dm))
             dm = bc.rotate_denslike(dm)
         else:
             v_ext = make_vext_velgauge(self.cell, afield, self._scf.kpts, self.h1e_ipovlp, vgppnl_helper=self.vgppnl_helper)
-            fock_init = h1e + get_veff(dm=dm)
+            fock_init = h1e + get_veff(dm_kpts=dm)
 
         prop_state = PropagatorState(
                     dm = dm,
