@@ -84,7 +84,7 @@ def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=Fal
                     C2inv = sla.inv(C2)
                     expw_k = C2 @ (np.exp(-1.0j * dt * evs)[:, None] * C2inv)
                 dm_p_dt_new[k] = expw_k @ dm[k] @ expw_k.conj().T
-            dm_p_dt_new[my_kpt_inds] = dm_p_dt_new
+
             allreduce_inplace_contiguous(dm_p_dt_new, comm)
 
         else:
