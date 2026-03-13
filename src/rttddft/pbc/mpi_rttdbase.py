@@ -237,7 +237,7 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
             chkf = h5py.File(self.chkfile, "w") if self.chkfile is not None else None
             if chkf is not None:
                 chkf.create_dataset('t', (0,), maxshape=(None,), dtype=np.float64, chunks=True)
-                chkf.create_dataset('dipole', (0, 3), maxshape=(None, 3), dtype=np.complex128, chunks=True)
+                chkf.create_dataset('velocity', (0, 3), maxshape=(None, 3), dtype=np.complex128, chunks=True)
                 chkf.create_dataset('dm', (0, nkpts, self.mol.nao, self.mol.nao),
                                     dtype=np.complex128,
                                     maxshape=(None, nkpts, self.mol.nao, self.mol.nao),
@@ -252,14 +252,14 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
                 dmao = dm
             velocity = get_electronic_velocity(self.cell, afield(t), self._scf.kpts, self.h1e_ipovlp, dm=dmao, vgppnl_helper=self.vgppnl_helper)
             self.trace['t'].append(t)
-            self.trace['dipole'].append(-velocity)
+            self.trace['velocity'].append(-velocity)
             self.trace['dm'].append(dm.copy())
             if rank == 0 and chkf is not None:
                 chkf['t'].resize((chkf['t'].shape[0] + 1), axis=0)
-                chkf['dipole'].resize((chkf['dipole'].shape[0] + 1), axis=0)
+                chkf['velocity'].resize((chkf['velocity'].shape[0] + 1), axis=0)
                 chkf['dm'].resize((chkf['dm'].shape[0] + 1), axis=0)
                 chkf['t'][-1] = t
-                chkf['dipole'][-1] = np.asarray(dipole, dtype=np.complex128)
+                chkf['velocity'][-1] = np.asarray(velocity, dtype=np.complex128)
                 chkf['dm'][-1] = np.asarray(dm, dtype=np.complex128)
 
         
