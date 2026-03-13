@@ -11,9 +11,8 @@ size = comm.Get_size()
 from pyscf.pbc.mpitools.mpi_helper import allreduce_inplace_contiguous
 
 
-def my_kpts_and_inds(kpts):
-    my_kpt_inds = np.arange(rank, len(kpts), size)
-    return kpts[my_kpt_inds], my_kpt_inds
+
+
 
 def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=False, bc=None, logger=None, callback=None):
     """Perform a single predictor/corrector time step using the Magnus expansion.
@@ -62,7 +61,7 @@ def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=Fal
     if dm.ndim > 2:
         nkpts = dm.shape[0]
         is_kpoint = True
-        my_kpts, my_kpt_inds = my_kpts_and_inds(kpts)
+        my_kpt_inds = np.arange(rank, nkpts, size)
     else:
         nkpts = 0
         is_kpoint = False
