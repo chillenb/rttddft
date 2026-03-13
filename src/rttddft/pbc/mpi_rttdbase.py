@@ -231,6 +231,8 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
         
         nsteps = math.ceil((t_end - t_start) / dt)
 
+        nkpts = len(self._scf.kpts)
+
         if rank == 0:
             chkf = h5py.File(self.chkfile, "w") if self.chkfile is not None else None
             if chkf is not None:
