@@ -14,6 +14,13 @@ from pyscf import __config__
 
 from pyscf.pbc.mpitools.mpi_helper import allreduce_inplace_contiguous
 
+# def allreduce_inplace_contiguous(comm, in_array):
+#     if not in_array.flags.c_contiguous or not in_array.flags.c_contiguous:
+#         raise ValueError("Input array must be contiguous")
+#     view_1d = numpy.reshape(in_array, -1, order='A')
+#     for i in range(0, view_1d.size, 2**30):
+#         comm.Allreduce(MPI.IN_PLACE, in_array[i : min(i+2**30, view_1d.size)])
+
 
 
 import math
@@ -130,7 +137,7 @@ def make_vext_velgauge(cell, afield, kpts, h1e_ipovlp, bc=None, vgppnl_helper=No
         vext_ao_local = (qA_sqr * np.eye(nao))[None, :, :] - 2.0 * qA_dot_p_my_k + pp_nl
         vext_ao = np.zeros((len(kpts), nao, nao), dtype=np.complex128)
         vext_ao[my_kpt_inds] = vext_ao_local
-        allreduce_inplace_contiguous(vext_ao, comm)
+        allreduce_inplace_contiguous(comm, vext_ao)
 
         if bc is not None:
             vext_mo = bc.rotate_focklike(vext_ao)
@@ -151,7 +158,7 @@ def get_electronic_velocity(cell, A, kpts, h1e_ipovlp, bc=None, dm=None, vgppnl_
         if cell.pseudo:
             velocity += np.einsum('ixy,xy->i', r_vnl_commutator[k], dm[my_kpt_inds[k]]) / (1.0j)
         velocity -= qA * np.trace(dm[my_kpt_inds[k]])
-    allreduce_inplace_contiguous(velocity, comm)
+    allreduce_inplace_contiguous(comm, velocity)
     return velocity
 
 class MPIKRTTDSCF(rttdbase.RTTDSCF):
@@ -185,17 +192,17 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
             else:
                 h1e_nuc_local_my = mf.with_df.get_nuc(my_kpts)
             self.h1e_nuc_local[my_kpt_inds] = h1e_nuc_local_my
-        allreduce_inplace_contiguous(self.h1e_nuc_local, comm)
+        allreduce_inplace_contiguous(comm, self.h1e_nuc_local)
 
         self.h1e_kin = np.zeros((len(kpts), nao, nao), dtype=np.complex128)
         if len(my_kpts) > 0:
             self.h1e_kin[my_kpt_inds] = np.asarray(cell.pbc_intor('int1e_kin', comp=1, hermi=1, kpts=my_kpts))
-        allreduce_inplace_contiguous(self.h1e_kin, comm)
+        allreduce_inplace_contiguous(comm, self.h1e_kin)
         
         self.h1e_ipovlp = np.zeros((len(kpts), 3, nao, nao), dtype=np.complex128)
         if len(my_kpts) > 0:
             self.h1e_ipovlp[my_kpt_inds] = np.asarray(cell.pbc_intor('int1e_ipovlp', comp=3, hermi=0, kpts=my_kpts))
-        allreduce_inplace_contiguous(self.h1e_ipovlp, comm)
+        allreduce_inplace_contiguous(comm, self.h1e_ipovlp)
 
         if cell.pseudo:
             self.vgppnl_helper = VelGaugePPNLHelper(cell, kpts)
