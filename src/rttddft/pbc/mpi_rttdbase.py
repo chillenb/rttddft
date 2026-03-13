@@ -273,8 +273,13 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
         dm = self._scf.make_rdm1()
         h1e = self.h1e_nuc_local + self.h1e_kin
         S = self._scf.get_ovlp()
-        def my_get_veff(dm_kpts):
-            return self._scf.get_veff(dm_kpts=dm_kpts)
+
+        if hasattr(self._scf, '_numint'):
+            def my_get_veff(dm_kpts):
+                return self._scf.get_veff(dm=dm_kpts)
+        else:
+            def my_get_veff(dm_kpts):
+                return self._scf.get_veff(dm_kpts=dm_kpts)
 
 
 
