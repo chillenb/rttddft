@@ -62,14 +62,14 @@ class MPIKBasisChanger:
             else:
                 self.Cinv[k] = np.linalg.inv(C[k])
         
-        allreduce_inplace_contiguous(self.Cinv, comm)
+        allreduce_inplace_contiguous(comm, self.Cinv)
         
     def rotate_focklike(self, kmat):
         kmat_transformed = np.zeros_like(kmat)
         _, my_kpt_inds = my_kpts_and_inds(np.arange(self.nkpts))
         for k in my_kpt_inds:
             kmat_transformed[k] = chaindot(self.C[k].conj().T, kmat[k], self.C[k])
-        allreduce_inplace_contiguous(kmat_transformed, comm)
+        allreduce_inplace_contiguous(comm, kmat_transformed)
         return kmat_transformed
 
     def rotate_denslike(self, kmat):
@@ -77,7 +77,7 @@ class MPIKBasisChanger:
         _, my_kpt_inds = my_kpts_and_inds(np.arange(self.nkpts))
         for k in my_kpt_inds:
             kmat_transformed[k] = chaindot(self.Cinv[k], kmat[k], self.Cinv[k].conj().T)
-        allreduce_inplace_contiguous(kmat_transformed, comm)
+        allreduce_inplace_contiguous(comm, kmat_transformed)
         return kmat_transformed
 
 
@@ -86,7 +86,7 @@ class MPIKBasisChanger:
         _, my_kpt_inds = my_kpts_and_inds(np.arange(self.nkpts))
         for k in my_kpt_inds:
             kmat_transformed[k] = chaindot(self.Cinv[k], kmat[k], self.C[k])
-        allreduce_inplace_contiguous(kmat_transformed, comm)
+        allreduce_inplace_contiguous(comm, kmat_transformed)
         return kmat_transformed
     
     def rev_focklike(self, kmat):
@@ -94,7 +94,7 @@ class MPIKBasisChanger:
         _, my_kpt_inds = my_kpts_and_inds(np.arange(self.nkpts))
         for k in my_kpt_inds:
             kmat_transformed[k] = chaindot(self.Cinv[k].conj().T, kmat[k], self.Cinv[k])
-        allreduce_inplace_contiguous(kmat_transformed, comm)
+        allreduce_inplace_contiguous(comm, kmat_transformed)
         return kmat_transformed
 
     def rev_denslike(self, kmat):
@@ -102,7 +102,7 @@ class MPIKBasisChanger:
         _, my_kpt_inds = my_kpts_and_inds(np.arange(self.nkpts))
         for k in my_kpt_inds:
             kmat_transformed[k] = chaindot(self.C[k], kmat[k], self.C[k].conj().T)
-        allreduce_inplace_contiguous(kmat_transformed, comm)
+        allreduce_inplace_contiguous(comm, kmat_transformed)
         return kmat_transformed
 
     def rev_oplike(self, kmat):
@@ -110,7 +110,7 @@ class MPIKBasisChanger:
         _, my_kpt_inds = my_kpts_and_inds(np.arange(self.nkpts))
         for k in my_kpt_inds:
             kmat_transformed[k] = chaindot(self.C[k], kmat[k], self.Cinv[k])
-        allreduce_inplace_contiguous(kmat_transformed, comm)
+        allreduce_inplace_contiguous(comm, kmat_transformed)
         return kmat_transformed
 
     def transform(self, kmat, mat_type='focklike', rev=False):
@@ -140,7 +140,7 @@ class MPIKBasisChanger:
             _, my_kpt_inds = my_kpts_and_inds(np.arange(self.nkpts))
             for k in my_kpt_inds:
                 S_tilde[k] = np.eye(self.S.shape[1])
-            allreduce_inplace_contiguous(S_tilde, comm)
+            allreduce_inplace_contiguous(comm, S_tilde)
         else:
             S_tilde = self.rotate_focklike(self.S)
 
@@ -154,5 +154,5 @@ class MPIKBasisChanger:
         _, my_kpt_inds = my_kpts_and_inds(np.arange(self.nkpts))
         for k in my_kpt_inds:
             C[k] = self.C[k] @ other.C[k]
-        allreduce_inplace_contiguous(C, comm)
+        allreduce_inplace_contiguous(comm, C)
         return MPIKBasisChanger(S, C, to_orthonormal=other.to_orthonormal)
