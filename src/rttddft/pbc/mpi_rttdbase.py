@@ -298,7 +298,7 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
                 h1e = h1e,
                 v_ext = v_ext,
                 S = S,
-                get_veff = get_veff,
+                get_veff = my_get_veff,
                 dt = dt,
                 conv_tol = 1e-5,
                 mo_basis = mo_basis,
