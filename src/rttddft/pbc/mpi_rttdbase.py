@@ -63,21 +63,22 @@ RTSCF_PROP_METHODS = {'magnus2': mpi_magnus2.step_magnus2, 'mmut': mpi_mmut.step
 
 import h5py
 
-def kick_afield(t0, peak, dir=(0,0,1.0)):
+def kick_afield(t0, F0, dir=(0,0,1.0)):
+    # A(t) = -c F0 n theta(t)
     uhat = np.asarray(dir)
     uhat = uhat / np.linalg.norm(uhat)
     def E(t):
-        return (np.sign(t-t0) * peak) * uhat
+        return -1.0 * nist.LIGHT_SPEED * (np.sign(t-t0) * F0) * uhat
     return E
 
 def zerofield(t):
     return (0.0,0.0,0.0)
 
-def gaussian_afield(t0, sigma, peak, dir=(0,0,1.0)):
+def gaussian_afield(t0, sigma, F0, dir=(0,0,1.0)):
     uhat = np.asarray(dir)
     uhat = uhat / np.linalg.norm(uhat)
     def E(t):
-        return scipy.special.erf((t - t0) / sigma) * peak * uhat
+        return -1.0 * nist.LIGHT_SPEED * scipy.special.erf((t - t0) / sigma) * F0 * uhat
     return E
 
 def get_pseudopotential_local_part(mf, kpts=None):
@@ -138,24 +139,24 @@ def get_pseudopotential_local_part(mf, kpts=None):
 
 def get_v_ext(cell, afield_t, kpts, S, h1e_ipovlp, bc=None, vgppnl_helper=None, ppnl_nofield=None):
     # q is -1 for electrons
-    qA = -np.asarray(afield_t)
-    logger.debug(cell, f'make_vext_velgauge: qA={qA}')
+    qA_over_c = -np.asarray(afield_t) / nist.LIGHT_SPEED
+    logger.debug(cell, f'make_vext_velgauge: qA={qA_over_c}')
     my_kpts, my_kpt_inds = my_kpts_and_inds(kpts)
 
     h1e_ipovlp_my_k = h1e_ipovlp[my_kpt_inds]
     S_my_k = S[my_kpt_inds]
-    qA_dot_p_my_k = np.einsum('i,kixy->kxy', qA, h1e_ipovlp_my_k) * (1.0j)
+    qA_over_c_dot_p_my_k = np.einsum('i,kixy->kxy', qA_over_c, h1e_ipovlp_my_k) * (1.0j)
 
-    qA_sqr = np.dot(qA, qA)
+    qA_over_c_sqr = np.dot(qA_over_c, qA_over_c)
     if cell.pseudo:
-        pp_nl = get_gth_pp_nl_velgauge(cell, q=qA, kpts=my_kpts, vgppnl_helper=vgppnl_helper)
+        pp_nl = get_gth_pp_nl_velgauge(cell, q=qA_over_c, kpts=my_kpts, vgppnl_helper=vgppnl_helper)
         if ppnl_nofield is None:
             ppnl_nofield = get_gth_pp_nl_velgauge(cell, q=np.zeros(3), kpts=my_kpts, vgppnl_helper=vgppnl_helper)
         pp_nl -= ppnl_nofield
     else:
         pp_nl = 0.0
     nao = cell.nao_nr()
-    vext_ao_local = qA_sqr * S_my_k - 2.0 * qA_dot_p_my_k + pp_nl
+    vext_ao_local = qA_over_c_sqr * S_my_k - 2.0 * qA_over_c_dot_p_my_k + pp_nl
     vext_ao = np.zeros((len(kpts), nao, nao), dtype=np.complex128)
     vext_ao[my_kpt_inds] = vext_ao_local
     allreduce_inplace_contiguous(comm, vext_ao)
@@ -178,18 +179,18 @@ def make_vext_velgauge(cell, afield, kpts, S, h1e_ipovlp, bc=None, vgppnl_helper
     return v_ext
 
 def get_electronic_velocity(cell, A, kpts, S, h1e_ipovlp, bc=None, dm=None, vgppnl_helper=None):
-    qA = -1.0 * A
+    qA_over_c = -1.0 * A / nist.LIGHT_SPEED
     my_kpts, my_kpt_inds = my_kpts_and_inds(kpts)
     h1e_ipovlp_my_k = h1e_ipovlp[my_kpt_inds]
     if cell.pseudo:
         with lib.temporary_env(cell, verbose=0):
-            r_vnl_commutator = get_gth_pp_nl_velgauge_commutator(cell, q=qA, kpts=my_kpts, vgppnl_helper=vgppnl_helper)
+            r_vnl_commutator = get_gth_pp_nl_velgauge_commutator(cell, q=qA_over_c, kpts=my_kpts, vgppnl_helper=vgppnl_helper)
     velocity = np.zeros(3, dtype=np.complex128)
     for k in range(len(my_kpts)):
         velocity += np.einsum('ixy,xy->i', h1e_ipovlp_my_k[k], dm[my_kpt_inds[k]], optimize=True) * (1.0j)
         if cell.pseudo:
             velocity += np.einsum('ixy,xy->i', r_vnl_commutator[k], dm[my_kpt_inds[k]], optimize=True) / (1.0j)
-        velocity -= qA * np.einsum('xy,xy->', S[k], dm[my_kpt_inds[k]])
+        velocity -= qA_over_c * np.einsum('xy,xy->', S[k], dm[my_kpt_inds[k]])
     allreduce_inplace_contiguous(comm, velocity)
     return velocity
 
