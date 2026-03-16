@@ -1,3 +1,4 @@
+from functools import lru_cache
 import numpy as np
 from pyscf import lib
 from pyscf.lib import logger
@@ -8,7 +9,9 @@ from pyscf.pbc.gto import pseudo
 from pyscf.pbc.df import gdf_builder, aft, rsdf_builder
 from pyscf.pbc.df import gdf_builder, aft, mpi_rsdf_builder
 
+
 from pyscf.pbc.df import rsdf
+from pyscf.pbc.gto import pseudo
 from pyscf.pbc.gto.pseudo.ppnl_velgauge import VelGaugePPNLHelper, get_gth_pp_nl_velgauge, get_gth_pp_nl_velgauge_commutator
 from pyscf import __config__
 
@@ -45,6 +48,16 @@ def my_kpts_and_inds(kpts):
     my_kpt_inds = np.arange(rank, len(kpts), size)
     return kpts[my_kpt_inds], my_kpt_inds
 
+def purif(dm, restricted=True):
+    e, u = sla.eigh(dm)
+    e[np.abs(e)<1e-8] = 0.0
+    occ = 2.0 if restricted else 1.0
+    if not np.allclose(e[e>0.0], occ):
+        print(e)
+        raise ValueError(f"occupancies are weird: {e}")
+    e[e>0.0] = occ
+    mocc = u[:,e>0.0]
+    return occ * (mocc@mocc.conj().T)
 
 RTSCF_PROP_METHODS = {'magnus2': mpi_magnus2.step_magnus2, 'mmut': mpi_mmut.step_mmut}
 
@@ -56,6 +69,9 @@ def kick_afield(t0, peak, dir=(0,0,1.0)):
     def E(t):
         return (np.sign(t-t0) * peak) * uhat
     return E
+
+def zerofield(t):
+    return (0.0,0.0,0.0)
 
 def gaussian_afield(t0, sigma, peak, dir=(0,0,1.0)):
     uhat = np.asarray(dir)
@@ -120,44 +136,60 @@ def get_pseudopotential_local_part(mf, kpts=None):
         vpp_loc = vpp_loc[0]
     return vpp_loc
 
-def make_vext_velgauge(cell, afield, kpts, h1e_ipovlp, bc=None, vgppnl_helper=None):
-    def v_ext(t):
-        # q is -1 for electrons
-        qA = -afield(t)
-        my_kpts, my_kpt_inds = my_kpts_and_inds(kpts)
-        h1e_ipovlp_my_k = h1e_ipovlp[my_kpt_inds]
-        qA_dot_p_my_k = np.einsum('i,kixy->kxy', qA, h1e_ipovlp_my_k) * (1.0j)
-        qA_dot_p = np.einsum('kxy->xy', qA_dot_p_my_k)
-        qA_sqr = np.dot(qA, qA)
-        if cell.pseudo:
-            pp_nl = get_gth_pp_nl_velgauge(cell, q=qA*0, kpts=my_kpts, vgppnl_helper=vgppnl_helper)
-        else:
-            pp_nl = 0.0
-        nao = cell.nao_nr()
-        vext_ao_local = (qA_sqr * np.eye(nao))[None, :, :] - 2.0 * qA_dot_p_my_k + pp_nl
-        vext_ao = np.zeros((len(kpts), nao, nao), dtype=np.complex128)
-        vext_ao[my_kpt_inds] = vext_ao_local
-        allreduce_inplace_contiguous(comm, vext_ao)
+def get_v_ext(cell, afield_t, kpts, S, h1e_ipovlp, bc=None, vgppnl_helper=None, ppnl_nofield=None):
+    # q is -1 for electrons
+    qA = -np.asarray(afield_t)
+    logger.debug(cell, f'make_vext_velgauge: qA={qA}')
+    my_kpts, my_kpt_inds = my_kpts_and_inds(kpts)
 
-        if bc is not None:
-            vext_mo = bc.rotate_focklike(vext_ao)
-            return vext_mo
-        else:
-            return vext_ao
+    h1e_ipovlp_my_k = h1e_ipovlp[my_kpt_inds]
+    S_my_k = S[my_kpt_inds]
+    qA_dot_p_my_k = np.einsum('i,kixy->kxy', qA, h1e_ipovlp_my_k) * (1.0j)
+
+    qA_sqr = np.dot(qA, qA)
+    if cell.pseudo:
+        pp_nl = get_gth_pp_nl_velgauge(cell, q=qA, kpts=my_kpts, vgppnl_helper=vgppnl_helper)
+        if ppnl_nofield is None:
+            ppnl_nofield = get_gth_pp_nl_velgauge(cell, q=np.zeros(3), kpts=my_kpts, vgppnl_helper=vgppnl_helper)
+        pp_nl -= ppnl_nofield
+    else:
+        pp_nl = 0.0
+    nao = cell.nao_nr()
+    vext_ao_local = qA_sqr * S_my_k - 2.0 * qA_dot_p_my_k + pp_nl
+    vext_ao = np.zeros((len(kpts), nao, nao), dtype=np.complex128)
+    vext_ao[my_kpt_inds] = vext_ao_local
+    allreduce_inplace_contiguous(comm, vext_ao)
+
+    if bc is not None:
+        vext_mo = bc.rotate_focklike(vext_ao)
+        return vext_mo
+    else:
+        return vext_ao
+
+def make_vext_velgauge(cell, afield, kpts, S, h1e_ipovlp, bc=None, vgppnl_helper=None):
+    @lru_cache(16)
+    def v_ext_tup(afield_tuple):
+        return get_v_ext(cell, afield_tuple, kpts, S, h1e_ipovlp, bc=bc, vgppnl_helper=vgppnl_helper)
+    def v_ext(t):
+        afield_t = afield(t)
+        retval = v_ext_tup((float(afield_t[0]), float(afield_t[1]), float(afield_t[2])))
+        # print(v_ext_tup.cache_info())
+        return retval
     return v_ext
 
-def get_electronic_velocity(cell, A, kpts, h1e_ipovlp, bc=None, dm=None, vgppnl_helper=None):
+def get_electronic_velocity(cell, A, kpts, S, h1e_ipovlp, bc=None, dm=None, vgppnl_helper=None):
     qA = -1.0 * A
     my_kpts, my_kpt_inds = my_kpts_and_inds(kpts)
     h1e_ipovlp_my_k = h1e_ipovlp[my_kpt_inds]
     if cell.pseudo:
-        r_vnl_commutator = get_gth_pp_nl_velgauge_commutator(cell, q=qA, kpts=my_kpts, vgppnl_helper=vgppnl_helper)
+        with lib.temporary_env(cell, verbose=0):
+            r_vnl_commutator = get_gth_pp_nl_velgauge_commutator(cell, q=qA, kpts=my_kpts, vgppnl_helper=vgppnl_helper)
     velocity = np.zeros(3, dtype=np.complex128)
     for k in range(len(my_kpts)):
-        velocity += np.einsum('ixy,xy->i', h1e_ipovlp_my_k[k], dm[my_kpt_inds[k]]) * (1.0j)
+        velocity += np.einsum('ixy,xy->i', h1e_ipovlp_my_k[k], dm[my_kpt_inds[k]], optimize=True) * (1.0j)
         if cell.pseudo:
-            velocity += np.einsum('ixy,xy->i', r_vnl_commutator[k], dm[my_kpt_inds[k]]) / (1.0j)
-        velocity -= qA * np.trace(dm[my_kpt_inds[k]])
+            velocity += np.einsum('ixy,xy->i', r_vnl_commutator[k], dm[my_kpt_inds[k]], optimize=True) / (1.0j)
+        velocity -= qA * np.einsum('xy,xy->', S[k], dm[my_kpt_inds[k]])
     allreduce_inplace_contiguous(comm, velocity)
     return velocity
 
@@ -204,16 +236,24 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
             self.h1e_ipovlp[my_kpt_inds] = np.asarray(cell.pbc_intor('int1e_ipovlp', comp=3, hermi=0, kpts=my_kpts))
         allreduce_inplace_contiguous(comm, self.h1e_ipovlp)
 
-        if cell.pseudo:
-            self.vgppnl_helper = VelGaugePPNLHelper(cell, kpts)
-            self.vgppnl_helper.build()
+
 
 
     def kernel(self, t_end, dt, t_start=0.0, efield=None, mo_basis=True, afield=None):
 
         self.init_onebody_integrals()
+        kpts = self._scf.kpts
+        nkpts = len(kpts)
+        cell = self.cell
+        local_kpts, local_kpt_inds = my_kpts_and_inds(kpts)
 
-        bc = MPIKBasisChanger(self._scf.get_ovlp(), self._scf.mo_coeff, to_orthonormal=True, nkpts=len(self._scf.kpts))
+        dm = self._scf.make_rdm1()
+        h1e = self.h1e_nuc_local + self.h1e_kin
+        S = self._scf.get_ovlp()
+
+
+
+        bc = MPIKBasisChanger(self._scf.get_ovlp(), self._scf.mo_coeff, to_orthonormal=True, nkpts=nkpts)
         log = logger.new_logger(self, self.verbose)
 
         # with self.mol.with_common_origin((0.0, 0.0, 0.0)):
@@ -231,7 +271,14 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
         
         nsteps = math.ceil((t_end - t_start) / dt)
 
-        nkpts = len(self._scf.kpts)
+
+
+
+        if cell.pseudo:
+            vgppnl_helper = VelGaugePPNLHelper(cell, local_kpts)
+            vgppnl_helper.build()
+        else:
+            vgppnl_helper = None
 
         if rank == 0:
             chkf = h5py.File(self.chkfile, "w") if self.chkfile is not None else None
@@ -250,7 +297,7 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
                 dmao = bc.rev_denslike(dm)
             else:
                 dmao = dm
-            velocity = get_electronic_velocity(self.cell, afield(t), self._scf.kpts, self.h1e_ipovlp, dm=dmao, vgppnl_helper=self.vgppnl_helper)
+            velocity = get_electronic_velocity(self.cell, afield(t), self._scf.kpts, S, self.h1e_ipovlp, dm=dmao, vgppnl_helper=self.vgppnl_helper)
             self.trace['t'].append(t)
             self.trace['velocity'].append(-velocity)
             self.trace['dm'].append(dm.copy())
@@ -270,9 +317,7 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
             else:
                 raise ValueError(f'prop_method {self.prop_method} not recognized')
 
-        dm = self._scf.make_rdm1()
-        h1e = self.h1e_nuc_local + self.h1e_kin
-        S = self._scf.get_ovlp()
+
 
         if hasattr(self._scf, '_numint'):
             def my_get_veff(dm_kpts):
@@ -281,19 +326,27 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
             def my_get_veff(dm_kpts):
                 return self._scf.get_veff(dm_kpts=dm_kpts)
 
-
+        pp_nl_nofield = pseudo.pp_int.get_pp_nl(cell, kpts)
+        pp_nl_nofield3 = get_gth_pp_nl_velgauge(cell, q=np.zeros(3), kpts=kpts, vgppnl_helper=self.vgppnl_helper)
+        ppnl_err = np.linalg.norm(pp_nl_nofield-pp_nl_nofield3)
+        if ppnl_err > 1e-5:
+            raise ValueError(f"ppnl_err1={ppnl_err}")
 
         if mo_basis:
-            v_ext = make_vext_velgauge(self.cell, afield, self._scf.kpts, self.h1e_ipovlp, bc=bc, vgppnl_helper=self.vgppnl_helper)
-            fock_init = bc.rotate_focklike(h1e + my_get_veff(dm_kpts=dm))
-            dm = bc.rotate_denslike(dm)
+            v_ext = make_vext_velgauge(cell, afield, kpts, S, self.h1e_ipovlp, bc=bc, vgppnl_helper=self.vgppnl_helper)
+            fock_init = bc.rotate_focklike(h1e + my_get_veff(dm_kpts=dm) + pp_nl_nofield)
+            dm = np.asarray(
+                [np.diag(self._scf.mo_occ[k]) for k in range(nkpts)],
+                dtype=np.complex128
+            )
         else:
-            v_ext = make_vext_velgauge(self.cell, afield, self._scf.kpts, self.h1e_ipovlp, vgppnl_helper=self.vgppnl_helper)
-            fock_init = h1e + my_get_veff(dm_kpts=dm)
+            v_ext = make_vext_velgauge(self.cell, afield, self._scf.kpts, S, self.h1e_ipovlp, vgppnl_helper=self.vgppnl_helper)
+            fock_init = h1e + my_get_veff(dm_kpts=dm) + pp_nl_nofield
 
         prop_state = PropagatorState(
                     dm = dm,
                     dm_min_half = dm,
+                    dm_prev = None,
                     fock = fock_init,
                     fock_prev = fock_init,
                     time = t_start,
@@ -303,7 +356,7 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
         for _ in range(nsteps):
             prop_state = self.prop(
                 state = prop_state,
-                h1e = h1e,
+                h1e = h1e + pp_nl_nofield,
                 v_ext = v_ext,
                 S = S,
                 get_veff = my_get_veff,

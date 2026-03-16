@@ -112,14 +112,14 @@ def make_vext_velgauge(cell, afield, kpts, h1e_ipovlp, bc=None, vgppnl_helper=No
 
 def get_electronic_velocity(cell, A, kpts, h1e_ipovlp, bc=None, dm=None, vgppnl_helper=None):
     qA = -1.0 * A
-    if cell.pseudo:
-        r_vnl_commutator = get_gth_pp_nl_velgauge_commutator(cell, q=qA, kpts=kpts, vgppnl_helper=vgppnl_helper)
+    #if cell.pseudo:
+    #    r_vnl_commutator = get_gth_pp_nl_velgauge_commutator(cell, q=qA, kpts=kpts, vgppnl_helper=vgppnl_helper)
     velocity = np.zeros(3, dtype=np.complex128)
     for k in range(len(kpts)):
         velocity += np.einsum('ixy,xy->i', h1e_ipovlp[k], dm[k]) * (1.0j)
-        if cell.pseudo:
-            velocity += np.einsum('ixy,xy->i', r_vnl_commutator[k], dm[k]) / (1.0j)
-        velocity -= qA * np.trace(dm[k])
+        # if cell.pseudo:
+        #     velocity += np.einsum('ixy,xy->i', r_vnl_commutator[k], dm[k]) / (1.0j)
+        # velocity -= qA * np.trace(dm[k])
     return velocity
 
 class KRTTDSCF(rttdbase.RTTDSCF):
@@ -230,6 +230,7 @@ class KRTTDSCF(rttdbase.RTTDSCF):
         prop_state = PropagatorState(
                     dm = dm,
                     dm_min_half = dm,
+                    dm_prev = None,
                     fock = fock_init,
                     fock_prev = fock_init,
                     time = t_start,

@@ -11,10 +11,25 @@ size = comm.Get_size()
 from pyscf.pbc.mpitools.mpi_helper import allreduce_inplace_contiguous
 
 
+def mcweeny(dm, restricted=True):
+    dm_id = 0.5 * dm if restricted else dm
+    dm2 = dm_id @ dm_id
+    dm_pure = 3.0 * dm2 - 2.0 * (dm_id @ dm2)
+    retval = 2.0 * dm_pure if restricted else dm_pure
+    return retval
+
+
+def purif(dm, restricted=True):
+    e, u = sla.eigh(dm)
+    e[np.abs(e)<1e-8] = 0.0
+    occ = 2.0 if restricted else 1.0
+    e[e>0.0] = occ
+    mocc = u[:,e>0.0]
+    return occ * (mocc@mocc.conj().T)
 
 
 
-def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=False, bc=None, logger=None, callback=None):
+def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=False, bc=None, logger=None, callback=None, fock_ref=None):
     """Perform a single predictor/corrector time step using the Magnus expansion.
 
     Parameters
@@ -49,13 +64,19 @@ def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=Fal
     converged = False
     nbuilds = 0
     dm = state.dm
+    dm_prev = state.dm_prev
     F = state.fock
     F_m_dt = state.fock_prev
     F_p_half = 1.5 * F - 0.5 * F_m_dt
 
+    logger.debug(f'F_m_dt vs F_p_half: {np.linalg.norm(F_m_dt-F_p_half):1.3e}')
+
     t = state.time
 
-    dm_p_dt = state.dm
+
+
+
+
     F_p_dt = F_p_half
 
     if dm.ndim > 2:
@@ -66,9 +87,27 @@ def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=Fal
         nkpts = 0
         is_kpoint = False
 
-    v_ext_half = v_ext(t + 0.5 * dt)
+    if dm_prev is not None:
+        dm_p_dt = np.zeros_like(dm)
+        for k in my_kpt_inds:
+            dm_p_dt[k] = purif(2.0 * dm[k] - dm_prev[k])
+        allreduce_inplace_contiguous(comm, dm_p_dt)
+    else:
+        dm_p_dt = state.dm
 
+    v_ext_half = v_ext(t + 0.5 * dt)
+    logger.debug(f'v_ext_half: {np.linalg.norm(v_ext_half):1.3e}')
     while not converged:
+
+        # nondiag_norm = 0.0
+        # for k in my_kpt_inds:
+        #     nondiag_norm += np.linalg.norm(
+        #         dm_p_dt[k] - np.diag(np.diag(dm_p_dt[k]))
+        #     )
+        # nondiag_norm = comm.allreduce(nondiag_norm)
+        # logger.debug(f'nondiag_norm: {nondiag_norm:1.4e}')
+        # if rank == 0:
+        #     logger.debug(f'{np.diag(dm_p_dt[0])}')
 
         W = (F_p_half + v_ext_half)
         # k-point case
@@ -79,11 +118,13 @@ def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=Fal
                 if mo_basis:
                     evs, evecs = sla.eigh(W[k])
                     expw_k = evecs @ (np.exp(-1.0j * dt * evs)[:, None] * evecs.conj().T)
+                    dm_p_dt_new[k] = purif(expw_k @ dm[k] @ expw_k.conj().T)
                 else:
                     evs, C2 = sla.eigh(W[k], b=S[k])
                     C2inv = sla.inv(C2)
                     expw_k = C2 @ (np.exp(-1.0j * dt * evs)[:, None] * C2inv)
-                dm_p_dt_new[k] = expw_k @ dm[k] @ expw_k.conj().T
+                    dm_p_dt_new[k] = expw_k @ dm[k] @ expw_k.conj().T
+
 
             allreduce_inplace_contiguous(comm, dm_p_dt_new)
 
@@ -104,6 +145,7 @@ def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=Fal
         if diff < conv_tol:
             converged = True
         else:
+            logger.debug(f'Magnus2: diff={diff:1.3e}, conv_tol={conv_tol:1.3e}')
             if mo_basis:
                 assert bc is not None, "BasisChanger 'bc' must be provided to define the MO basis"
                 dm_p_dt_ao = bc.rev_denslike(dm_p_dt)
@@ -121,6 +163,7 @@ def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=Fal
     new_state = PropagatorState(
         dm=dm_p_dt,
         dm_min_half=None,
+        dm_prev=dm,
         fock=F_p_dt,
         fock_prev=F,
         time=t + dt,
