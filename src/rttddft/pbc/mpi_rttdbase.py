@@ -244,10 +244,10 @@ def get_frozen_mask(td):
             idx[frozen] = False
     elif isinstance(td.frozen[0], (list, np.ndarray)):
         nkpts = len(td.frozen)
-        if nkpts != td._scf.nkpts:
+        if nkpts != td.nkpts:
             raise RuntimeError('Frozen list has a different number of k-points (length) than passed in mean-field/'
                                'correlated calculation.  \n\nCalculation nkpts = %d, frozen list = %s '
-                               '(length = %d)' % (td._scf.nkpts, td.frozen, nkpts))
+                               '(length = %d)' % (td.nkpts, td.frozen, nkpts))
         [_frozen_sanity_check(fro, mo_occ, ikpt) for ikpt, fro, mo_occ in zip(range(nkpts), td.frozen, td._scf.mo_occ)]
         for ikpt, kpt_occ in enumerate(moidx):
             kpt_occ[td.frozen[ikpt]] = False
@@ -273,6 +273,7 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
         self.h1e_ipovlp = None
         self.vgppnl_helper = None
         self.frozen = frozen
+        self.nkpts = len(mf.kpts)
 
     def init_onebody_integrals(self):
         """Cache one-body integrals: kinetic, nuclear (local part of pseudopotentials if applicable),
