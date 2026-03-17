@@ -405,8 +405,8 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
 
         v_ext = make_vext_velgauge(cell, afield, kpts, S, self.h1e_ipovlp, bc=bc, vgppnl_helper=self.vgppnl_helper)
 
-
-        fock_init = bc.rotate_focklike(h1e + my_get_veff(dm_kpts=dm) + pp_nl_nofield)
+        veff = my_get_veff(dm_kpts=dm)
+        fock_init = bc.rotate_focklike(h1e + veff + pp_nl_nofield)
         diag_err = 0
         offdiag_err = 0
         for k in range(nkpts):
@@ -417,6 +417,9 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
         if rank == 0:
             print(f"fock init diag error: {diag_err:1.3e}")
             print(f"fock init offdiag error: {offdiag_err:1.3e}")
+            with h5py.File("fockerr.h5", "w") as outf:
+                outf['h1e'] = h1e
+                outf['veff'] = veff
 
             
 
