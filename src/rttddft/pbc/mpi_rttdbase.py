@@ -409,7 +409,7 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
         diag_err = 0
         offdiag_err = 0
         for k in range(nkpts):
-            diag_err += np.linalg.norm(np.diag(fock_init[k])-self._scf.mo_coeff[k])
+            diag_err += np.linalg.norm(np.diag(fock_init[k])-self._scf.mo_energy[k])
             tmpmat = fock_init[k].copy()
             tmpmat -= np.diag(np.diag(tmpmat))
             offdiag_err += np.linalg.norm(tmpmat)
