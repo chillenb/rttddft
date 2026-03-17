@@ -244,7 +244,7 @@ def get_frozen_mask(td):
             idx[frozen] = False
     elif isinstance(td.frozen[0], (list, np.ndarray)):
         nkpts = len(td.frozen)
-        if nkpts != td.nkpts:
+        if nkpts != td._scf.nkpts:
             raise RuntimeError('Frozen list has a different number of k-points (length) than passed in mean-field/'
                                'correlated calculation.  \n\nCalculation nkpts = %d, frozen list = %s '
                                '(length = %d)' % (td._scf.nkpts, td.frozen, nkpts))
