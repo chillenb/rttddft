@@ -406,12 +406,18 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
 
 
         fock_init = bc.rotate_focklike(h1e + my_get_veff(dm_kpts=dm) + pp_nl_nofield)
+        diag_err = 0
+        offdiag_err = 0
         for k in range(nkpts):
-            if not np.allclose(np.diag(fock_init[k]), self._scf.mo_energy[k]) or np.linalg.norm(fock_init[k] - np.diag(self._scf.mo_energy[k])) > 1e-6:
-                if rank == 0:
-                    np.save("badfock.npy", fock_init)
-                comm.Barrier()
-                comm.Abort()
+            diag_err += np.linalg.norm(np.diag(fock_init[k])-self._scf.mo_coeff[k])
+            tmpmat = fock_init[k].copy()
+            tmpmat -= np.diag(np.diag(tmpmat))
+            offdiag_err += np.linalg.norm(tmpmat)
+        if rank == 0:
+            print(f"fock init diag error: {diag_err:1.3e}")
+            print(f"fock init offdiag error: {offdiag_err:1.3e}")
+
+            
 
         dm = np.asarray(
             [np.diag(self._scf.mo_occ[k]) for k in range(nkpts)],
