@@ -86,7 +86,8 @@ def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, bc=None,
         nkpts = 0
         is_kpoint = False
 
-    if dm_prev is not None:
+    #if dm_prev is not None:
+    if False:
         dm_p_dt = np.zeros_like(dm)
         for k in my_kpt_inds:
             dm_p_dt[k] = purif(2.0 * dm[k] - dm_prev[k])
