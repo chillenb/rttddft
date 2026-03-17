@@ -8,6 +8,8 @@ comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 size = comm.Get_size()
 
+from pyscf import lib
+
 from pyscf.pbc.mpitools.mpi_helper import allreduce_inplace_contiguous
 
 
@@ -103,6 +105,9 @@ def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, bc=None,
 
     v_ext_half = v_ext(t + 0.5 * dt)
     logger.debug(f'v_ext_half: {np.linalg.norm(v_ext_half):1.3e}')
+
+    adiis = lib.diis.DIIS(incore=True)
+
     while not converged:
 
         # nondiag_norm = 0.0
@@ -159,6 +164,9 @@ def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, bc=None,
             F_p_dt_ao = h1e + get_veff(dm_p_dt_ao)
             F_p_dt = bc.rotate_focklike(F_p_dt_ao)
 
+            if nbuilds > 1:
+                F_p_dt = adiis.update(F_p_dt)
+                F_p_dt = comm.Bcast(F_p_dt, root=0)
 
             nbuilds += 1
             F_p_half = 0.5 * (F + F_p_dt)
