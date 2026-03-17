@@ -29,7 +29,8 @@ def purif(dm, restricted=True):
 
 
 
-def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=False, bc=None, logger=None, callback=None, fock_ref=None):
+def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, bc=None,
+    logger=None, callback=None, fock_ref=None, frozen=None, frozen_mask=None):
     """Perform a single predictor/corrector time step using the Magnus expansion.
 
     Parameters
@@ -46,8 +47,6 @@ def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=Fal
         Time step length
     conv_tol : float, by default 1e-5
         Convergence tolerance for the predictor/corrector step.
-    mo_basis : bool, optional
-        Whether to use the molecular orbital basis, by default False
     bc : BasisChanger, optional
         basis changer for MO basis; only needed if mo_basis is True, by default None
     logger : pyscf.lib.logger, optional
@@ -114,28 +113,26 @@ def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=Fal
         # todo: MPI parallelization
         if is_kpoint:
             dm_p_dt_new = np.zeros_like(dm)
-            for k in my_kpt_inds:
-                if mo_basis:
+            if frozen is None:
+                for k in my_kpt_inds:
                     evs, evecs = sla.eigh(W[k])
                     expw_k = evecs @ (np.exp(-1.0j * dt * evs)[:, None] * evecs.conj().T)
                     dm_p_dt_new[k] = purif(expw_k @ dm[k] @ expw_k.conj().T)
-                else:
-                    evs, C2 = sla.eigh(W[k], b=S[k])
-                    C2inv = sla.inv(C2)
-                    expw_k = C2 @ (np.exp(-1.0j * dt * evs)[:, None] * C2inv)
-                    dm_p_dt_new[k] = expw_k @ dm[k] @ expw_k.conj().T
+            else:
+                for k in my_kpt_inds:
+                    evs, evecs = sla.eigh(W[k, frozen_mask, frozen_mask])
+                    expw_k = evecs @ (np.exp(-1.0j * dt * evs)[:, None] * evecs.conj().T)
+                    dm_p_dt_new_unfrz_k = purif(expw_k @ dm[k, frozen_mask, frozen_mask] @ expw_k.conj().T)
+                    dm_p_dt_new[k, frozen_mask, frozen_mask] = dm_p_dt_new_unfrz_k
 
 
             allreduce_inplace_contiguous(comm, dm_p_dt_new)
 
         else:
-            if mo_basis:
-                evs, evecs = sla.eigh(W)
-                expw = evecs @ (np.exp(-1.0j * dt * evs)[:, None] * evecs.conj().T)
-            else:
-                evs, C2 = sla.eigh(W, b=S)
-                C2inv = sla.inv(C2)
-                expw = C2 @ (np.exp(-1.0j * dt * evs)[:, None] * C2inv)
+
+            evs, evecs = sla.eigh(W)
+            expw = evecs @ (np.exp(-1.0j * dt * evs)[:, None] * evecs.conj().T)
+
             dm_p_dt_new = expw @ dm @ expw.conj().T
 
         diff = np.linalg.norm(dm_p_dt_new - dm_p_dt)
@@ -146,13 +143,12 @@ def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, mo_basis=Fal
             converged = True
         else:
             logger.debug(f'Magnus2: diff={diff:1.3e}, conv_tol={conv_tol:1.3e}')
-            if mo_basis:
-                assert bc is not None, "BasisChanger 'bc' must be provided to define the MO basis"
-                dm_p_dt_ao = bc.rev_denslike(dm_p_dt)
-                F_p_dt_ao = h1e + get_veff(dm_p_dt_ao)
-                F_p_dt = bc.rotate_focklike(F_p_dt_ao)
-            else:
-                F_p_dt = h1e + get_veff(dm_p_dt)
+
+            assert bc is not None, "BasisChanger 'bc' must be provided to define the MO basis"
+            dm_p_dt_ao = bc.rev_denslike(dm_p_dt)
+            F_p_dt_ao = h1e + get_veff(dm_p_dt_ao)
+            F_p_dt = bc.rotate_focklike(F_p_dt_ao)
+
 
             nbuilds += 1
             F_p_half = 0.5 * (F + F_p_dt)

@@ -194,10 +194,31 @@ def get_electronic_velocity(cell, A, kpts, S, h1e_ipovlp, bc=None, dm=None, vgpp
     allreduce_inplace_contiguous(comm, velocity)
     return velocity
 
+def get_frozen_mask(td):
+    '''Get boolean mask for the restricted reference orbitals.
+
+    In the returned boolean (mask) array of frozen orbital indices, the
+    element is False if it corresponds to the frozen orbital.
+
+    See mp2.get_frozen_mask
+    '''
+    moidx = numpy.ones(td._scf.mo_occ.size, dtype=bool)
+    if td.frozen is None:
+        pass
+    elif isinstance(td.frozen, (int, numpy.integer)):
+        moidx[:td.frozen] = False
+    elif hasattr(td.frozen, '__len__'):
+        moidx[list(td.frozen)] = False
+    else:
+        raise NotImplementedError
+    return moidx
+
 class MPIKRTTDSCF(rttdbase.RTTDSCF):
     _keys = {'cell', 'h1e_nuc_local', 'h1e_kin', 'h1e_ipovlp', 'vgppnl_helper'}
 
-    def __init__(self, mf, prop_method='magnus2', chkfile = None):
+    get_frozen_mask = get_frozen_mask
+
+    def __init__(self, mf, prop_method='magnus2', chkfile = None, frozen=None):
         super().__init__(mf, prop_method=prop_method, chkfile=chkfile)
         self.cell = mf.cell
         from pyscf.pbc.dft.multigrid import MultiGridNumInt
@@ -207,6 +228,7 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
         self.h1e_nuc_local = None
         self.h1e_ipovlp = None
         self.vgppnl_helper = None
+        self.frozen = frozen
 
     def init_onebody_integrals(self):
         """Cache one-body integrals: kinetic, nuclear (local part of pseudopotentials if applicable),
@@ -241,6 +263,7 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
 
 
     def kernel(self, t_end, dt, t_start=0.0, efield=None, mo_basis=True, afield=None):
+        frozen = self.frozen
 
         self.init_onebody_integrals()
         kpts = self._scf.kpts
@@ -294,10 +317,7 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
         def stepcallback(state):
             t = state.time
             dm = state.dm
-            if mo_basis:
-                dmao = bc.rev_denslike(dm)
-            else:
-                dmao = dm
+            dmao = bc.rev_denslike(dm)
             velocity = get_electronic_velocity(self.cell, afield(t), self._scf.kpts, S, self.h1e_ipovlp, dm=dmao, vgppnl_helper=self.vgppnl_helper)
             self.trace['t'].append(t)
             self.trace['velocity'].append(-velocity)
@@ -333,16 +353,13 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
         if ppnl_err > 1e-5:
             raise ValueError(f"ppnl_err1={ppnl_err}")
 
-        if mo_basis:
-            v_ext = make_vext_velgauge(cell, afield, kpts, S, self.h1e_ipovlp, bc=bc, vgppnl_helper=self.vgppnl_helper)
-            fock_init = bc.rotate_focklike(h1e + my_get_veff(dm_kpts=dm) + pp_nl_nofield)
-            dm = np.asarray(
-                [np.diag(self._scf.mo_occ[k]) for k in range(nkpts)],
-                dtype=np.complex128
-            )
-        else:
-            v_ext = make_vext_velgauge(self.cell, afield, self._scf.kpts, S, self.h1e_ipovlp, vgppnl_helper=self.vgppnl_helper)
-            fock_init = h1e + my_get_veff(dm_kpts=dm) + pp_nl_nofield
+        v_ext = make_vext_velgauge(cell, afield, kpts, S, self.h1e_ipovlp, bc=bc, vgppnl_helper=self.vgppnl_helper)
+        fock_init = bc.rotate_focklike(h1e + my_get_veff(dm_kpts=dm) + pp_nl_nofield)
+        dm = np.asarray(
+            [np.diag(self._scf.mo_occ[k]) for k in range(nkpts)],
+            dtype=np.complex128
+        )
+
 
         prop_state = PropagatorState(
                     dm = dm,
@@ -363,8 +380,9 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
                 get_veff = my_get_veff,
                 dt = dt,
                 conv_tol = 1e-5,
-                mo_basis = mo_basis,
                 bc = bc,
                 logger = log,
-                callback = stepcallback
+                callback = stepcallback,
+                frozen=frozen,
+                frozen_mask=self.get_frozen_mask()
             )
