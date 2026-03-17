@@ -409,7 +409,7 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
         for k in range(nkpts):
             if not np.allclose(np.diag(fock_init[k]), self._scf.mo_energy[k]) or np.linalg.norm(fock_init[k] - np.diag(self._scf.mo_energy[k])) > 1e-6:
                 if rank == 0:
-                    np.savetxt("badfock.txt", fock_init)
+                    np.save("badfock.npy", fock_init)
                 comm.Barrier()
                 comm.Abort()
 
