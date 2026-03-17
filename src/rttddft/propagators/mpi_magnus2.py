@@ -137,6 +137,8 @@ def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, bc=None,
             dm_p_dt_new = expw @ dm @ expw.conj().T
 
         diff = np.linalg.norm(dm_p_dt_new - dm_p_dt)
+        if is_kpoint:
+            diff /= nkpts
 
         dm_p_dt = dm_p_dt_new
 
