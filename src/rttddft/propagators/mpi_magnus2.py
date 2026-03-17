@@ -86,11 +86,17 @@ def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, bc=None,
         nkpts = 0
         is_kpoint = False
 
-    #if dm_prev is not None:
-    if False:
+    if dm_prev is not None:
         dm_p_dt = np.zeros_like(dm)
-        for k in my_kpt_inds:
-            dm_p_dt[k] = purif(2.0 * dm[k] - dm_prev[k])
+        if frozen is None:
+            for k in my_kpt_inds:
+                dm_p_dt[k] = purif(2.0 * dm[k] - dm_prev[k])
+        else:
+            frozen_mask_k = frozen_mask[k]
+            mask2 = np.ix_(frozen_mask_k, frozen_mask_k)
+            for k in my_kpt_inds:
+                dm_p_dt[k] = dm[k]
+                dm_p_dt[k][mask2] = purif(2.0 * dm[k][mask2] - dm_prev[k][mask2])
         allreduce_inplace_contiguous(comm, dm_p_dt)
     else:
         dm_p_dt = state.dm
