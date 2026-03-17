@@ -36,6 +36,7 @@ from rttddft.rttdbase import make_vext_from_efield, get_mo_dip
 from rttddft.propagators.propstate import PropagatorState
 from rttddft.propagators import mpi_magnus2, mpi_mmut
 
+from rttddft.lib.basischanger import KBasisChanger
 from rttddft.lib.mpi_basischanger import MPIKBasisChanger
 
 
@@ -323,7 +324,7 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
 
 
 
-        bc = MPIKBasisChanger(self._scf.get_ovlp(), self._scf.mo_coeff, to_orthonormal=True, nkpts=nkpts)
+        bc = KBasisChanger(self._scf.get_ovlp(), self._scf.mo_coeff, to_orthonormal=True, nkpts=nkpts)
         log = logger.new_logger(self, self.verbose)
 
         # with self.mol.with_common_origin((0.0, 0.0, 0.0)):
