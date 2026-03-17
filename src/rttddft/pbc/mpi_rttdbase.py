@@ -286,14 +286,17 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
         my_kpts, my_kpt_inds = my_kpts_and_inds(kpts)
         nao = cell.nao_nr()
 
-        self.h1e_nuc_local = np.zeros((len(kpts), nao, nao), dtype=np.complex128)
-        if len(my_kpts) > 0:
-            if cell.pseudo:
-                h1e_nuc_local_my = get_pseudopotential_local_part(mf, my_kpts)
-            else:
-                h1e_nuc_local_my = mf.with_df.get_nuc(my_kpts)
+
+        if cell.pseudo:
+            self.h1e_nuc_local = np.zeros((len(kpts), nao, nao), dtype=np.complex128)
+            h1e_nuc_local_my = get_pseudopotential_local_part(mf, my_kpts)
             self.h1e_nuc_local[my_kpt_inds] = h1e_nuc_local_my
-        allreduce_inplace_contiguous(comm, self.h1e_nuc_local)
+            allreduce_inplace_contiguous(comm, self.h1e_nuc_local)
+        else:
+            self.h1e_nuc_local = mf.with_df.get_nuc(kpts)
+
+
+
 
         self.h1e_kin = np.zeros((len(kpts), nao, nao), dtype=np.complex128)
         if len(my_kpts) > 0:
