@@ -155,7 +155,8 @@ def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, bc=None,
             F_p_half = 0.5 * (F + F_p_dt)
 
     if logger is not None:
-        logger.debug(f'Magnus2: time {t:.3f}, {nbuilds} get_veff call(s), |drho| = {diff:1.3e}')
+        difference_norm = np.linalg.norm(dm_p_dt - dm)
+        logger.debug(f'Magnus2: time {t:.3f}, {nbuilds} get_veff call(s), |drho| = {difference_norm:1.3e}')
 
     new_state = PropagatorState(
         dm=dm_p_dt,
