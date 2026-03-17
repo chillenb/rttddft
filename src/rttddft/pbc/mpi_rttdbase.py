@@ -307,7 +307,8 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
 
 
 
-    def kernel(self, t_end, dt, t_start=0.0, efield=None, mo_basis=True, afield=None):
+    def kernel(self, t_end, dt, t_start=0.0, efield=None, mo_basis=True, afield=None,
+               conv_tol=1e-6):
         frozen = self.frozen
 
         self.init_onebody_integrals()
@@ -424,7 +425,7 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
                 S = S,
                 get_veff = my_get_veff,
                 dt = dt,
-                conv_tol = 1e-5,
+                conv_tol = conv_tol,
                 bc = bc,
                 logger = log,
                 callback = stepcallback,
