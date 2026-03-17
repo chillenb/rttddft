@@ -165,8 +165,8 @@ def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, bc=None,
             F_p_dt = bc.rotate_focklike(F_p_dt_ao)
 
             if nbuilds > 1:
-                F_p_dt = adiis.update(F_p_dt)
-                F_p_dt = comm.Bcast(F_p_dt, root=0)
+                F_p_dt = np.ascontiguousarray(adiis.update(F_p_dt))
+                comm.Bcast(F_p_dt, root=0)
 
             nbuilds += 1
             F_p_half = 0.5 * (F + F_p_dt)
