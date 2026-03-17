@@ -399,14 +399,13 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
             ppnl_err = np.linalg.norm(pp_nl_nofield-pp_nl_nofield3)
             if ppnl_err > 1e-5:
                 raise ValueError(f"ppnl_err1={ppnl_err}")
+        else:
+            pp_nl_nofield = 0.0
 
         v_ext = make_vext_velgauge(cell, afield, kpts, S, self.h1e_ipovlp, bc=bc, vgppnl_helper=self.vgppnl_helper)
 
 
-        if cell.pseudo:
-            fock_init = bc.rotate_focklike(h1e + my_get_veff(dm_kpts=dm) + pp_nl_nofield)
-        else:
-            fock_init = bc.rotate_focklike(h1e + my_get_veff(dm_kpts=dm))
+        fock_init = bc.rotate_focklike(h1e + my_get_veff(dm_kpts=dm) + pp_nl_nofield)
 
         dm = np.asarray(
             [np.diag(self._scf.mo_occ[k]) for k in range(nkpts)],
