@@ -420,6 +420,8 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
             with h5py.File("fockerr.h5", "w") as outf:
                 outf['h1e'] = h1e
                 outf['veff'] = veff
+                outf['h1e_nuc_local'] = self.h1e_nuc_local
+                outf['h1e_kin'] = self.h1e_kin
 
             
 
