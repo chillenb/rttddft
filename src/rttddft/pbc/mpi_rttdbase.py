@@ -194,23 +194,66 @@ def get_electronic_velocity(cell, A, kpts, S, h1e_ipovlp, bc=None, dm=None, vgpp
     allreduce_inplace_contiguous(comm, velocity)
     return velocity
 
-def get_frozen_mask(td):
-    '''Get boolean mask for the restricted reference orbitals.
 
-    In the returned boolean (mask) array of frozen orbital indices, the
-    element is False if it corresponds to the frozen orbital.
+def _frozen_sanity_check(frozen, mo_occ, kpt_idx):
+    '''Performs a few sanity checks on the frozen array and mo_occ.
 
-    See mp2.get_frozen_mask
+    Specific tests include checking for duplicates within the frozen array.
+
+    Args:
+        frozen (array_like of int): The orbital indices that will be frozen.
+        mo_occ (:obj:`ndarray` of int): The occupation number for each orbital
+            resulting from a mean-field-like calculation.
+        kpt_idx (int): The k-point that `mo_occ` and `frozen` belong to.
+
     '''
-    moidx = numpy.ones(td._scf.mo_occ.size, dtype=bool)
+    frozen = np.array(frozen)
+    nocc = np.count_nonzero(mo_occ > 0)
+
+    assert nocc, 'No occupied orbitals?\n\nnocc = %s\nmo_occ = %s' % (nocc, mo_occ)
+    all_frozen_unique = (len(frozen) - len(np.unique(frozen))) == 0
+    if not all_frozen_unique:
+        raise RuntimeError('Frozen orbital list contains duplicates!\n\nkpt_idx %s\n'
+                           'frozen %s' % (kpt_idx, frozen))
+    if len(frozen) > 0 and np.max(frozen) > len(mo_occ) - 1:
+        raise RuntimeError('Freezing orbital not in MO list!\n\nkpt_idx %s\n'
+                           'frozen %s\nmax orbital idx %s' % (kpt_idx, frozen, len(mo_occ) - 1))
+
+def get_frozen_mask(td):
+    '''Boolean mask for orbitals in k-point post-HF method.
+
+    Creates a boolean mask to remove frozen orbitals and keep other orbitals for post-HF
+    calculations.
+
+    Args:
+        mp (:class:`MP2`): An instantiation of an SCF or post-Hartree-Fock object.
+
+    Returns:
+        moidx (list of :obj:`ndarray` of `bool`): Boolean mask of orbitals to include.
+
+    '''
+    moidx = [np.ones(x.size, dtype=bool) for x in td._scf.mo_occ]
     if td.frozen is None:
         pass
-    elif isinstance(td.frozen, (int, numpy.integer)):
-        moidx[:td.frozen] = False
-    elif hasattr(td.frozen, '__len__'):
-        moidx[list(td.frozen)] = False
+    elif isinstance(td.frozen, (int, np.integer)):
+        for idx in moidx:
+            idx[:td.frozen] = False
+    elif isinstance(td.frozen[0], (int, np.integer)):
+        frozen = list(td.frozen)
+        for idx in moidx:
+            idx[frozen] = False
+    elif isinstance(td.frozen[0], (list, np.ndarray)):
+        nkpts = len(td.frozen)
+        if nkpts != td.nkpts:
+            raise RuntimeError('Frozen list has a different number of k-points (length) than passed in mean-field/'
+                               'correlated calculation.  \n\nCalculation nkpts = %d, frozen list = %s '
+                               '(length = %d)' % (td._scf.nkpts, td.frozen, nkpts))
+        [_frozen_sanity_check(fro, mo_occ, ikpt) for ikpt, fro, mo_occ in zip(range(nkpts), td.frozen, td._scf.mo_occ)]
+        for ikpt, kpt_occ in enumerate(moidx):
+            kpt_occ[td.frozen[ikpt]] = False
     else:
         raise NotImplementedError
+
     return moidx
 
 class MPIKRTTDSCF(rttdbase.RTTDSCF):
@@ -221,6 +264,7 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
     def __init__(self, mf, prop_method='magnus2', chkfile = None, frozen=None):
         super().__init__(mf, prop_method=prop_method, chkfile=chkfile)
         self.cell = mf.cell
+
         from pyscf.pbc.dft.multigrid import MultiGridNumInt
         if hasattr(mf, '_numint') and isinstance(mf._numint, MultiGridNumInt):
             raise NotImplementedError('Multigrid is not supported yet for RT-TDDFT')

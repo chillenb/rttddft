@@ -120,10 +120,11 @@ def step_magnus2(state, h1e, v_ext, S, get_veff, dt, conv_tol=1e-5, bc=None,
                     dm_p_dt_new[k] = purif(expw_k @ dm[k] @ expw_k.conj().T)
             else:
                 for k in my_kpt_inds:
-                    evs, evecs = sla.eigh(W[k, frozen_mask, frozen_mask])
+                    frozen_mask_k = frozen_mask[k]
+                    evs, evecs = sla.eigh(W[k, frozen_mask_k, frozen_mask_k])
                     expw_k = evecs @ (np.exp(-1.0j * dt * evs)[:, None] * evecs.conj().T)
-                    dm_p_dt_new_unfrz_k = purif(expw_k @ dm[k, frozen_mask, frozen_mask] @ expw_k.conj().T)
-                    dm_p_dt_new[k, frozen_mask, frozen_mask] = dm_p_dt_new_unfrz_k
+                    dm_p_dt_new_unfrz_k = purif(expw_k @ dm[k, frozen_mask_k, frozen_mask_k] @ expw_k.conj().T)
+                    dm_p_dt_new[k, frozen_mask_k, frozen_mask_k] = dm_p_dt_new_unfrz_k
 
 
             allreduce_inplace_contiguous(comm, dm_p_dt_new)
