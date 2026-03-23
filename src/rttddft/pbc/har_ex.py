@@ -133,31 +133,6 @@ class DistDiel:
         MPI.Request.Waitall(reqs)
 
 
-    def get_static_diel_ref(self):
-        mo_coeff = self.mf.mo_coeff
-        mo_energy = self.qp_energies
-        nocc = int(self.mf.cell.nelectron // 2)
-        naux = self.mf.with_df.get_naoaux()
-        nao = self.mf.cell.nao
-        nmo = nao
-        nvir = nmo - nocc
-        nkpts = self.nkpts
-
-        self.Pi_static_ref = np.zeros((len(self.kL_inds), naux, naux), dtype=np.complex128)
-
-        for ia, (kL, ki, ka) in enumerate(zip(self.kpts_L, self.kpts_i, self.kpts_j)):
-            ikL = kL - self.k_partition_divpts[rank]
-            Pi = self.Pi_static_ref[ikL]
-            # Find ka that conserves with ki and kL (-ki+ka+kL=G)
-            Lia_i = np.ascontiguousarray(self.cderiarr_slice[ia][:, :nocc, nocc:])
-            eia = mo_energy[ki][:nocc, None] - mo_energy[ka][None, nocc:]
-
-
-            # Since this is static dielectric function, effectively omega=0
-            eia = (1.0 / eia).astype(Lia_i.dtype)
-            Pia = lib.broadcast_mul(Lia_i, eia)
-            # Response from both spin-up and spin-down density
-            Pi += (4./nkpts) * lib.einsum('Pia,Qia->PQ', Pia, Lia_i.conj())
 
     def get_static_diel(self):
         mo_coeff = self.mf.mo_coeff
@@ -333,10 +308,34 @@ class DistDiel:
         allreduce_inplace_contiguous(comm, v_k)
         return v_k
 
-
-
     def get_screened_k(self, dm_kpts=None, mo_coeff=None):
         return self.get_k(dm_kpts=dm_kpts, mo_coeff=mo_coeff, screened=True)
+
+    def get_static_diel_ref(self):
+        mo_coeff = self.mf.mo_coeff
+        mo_energy = self.qp_energies
+        nocc = int(self.mf.cell.nelectron // 2)
+        naux = self.mf.with_df.get_naoaux()
+        nao = self.mf.cell.nao
+        nmo = nao
+        nvir = nmo - nocc
+        nkpts = self.nkpts
+
+        self.Pi_static_ref = np.zeros((len(self.kL_inds), naux, naux), dtype=np.complex128)
+
+        for ia, (kL, ki, ka) in enumerate(zip(self.kpts_L, self.kpts_i, self.kpts_j)):
+            ikL = kL - self.k_partition_divpts[rank]
+            Pi = self.Pi_static_ref[ikL]
+            # Find ka that conserves with ki and kL (-ki+ka+kL=G)
+            Lia_i = np.ascontiguousarray(self.cderiarr_slice[ia][:, :nocc, nocc:])
+            eia = mo_energy[ki][:nocc, None] - mo_energy[ka][None, nocc:]
+
+
+            # Since this is static dielectric function, effectively omega=0
+            eia = (1.0 / eia).astype(Lia_i.dtype)
+            Pia = lib.broadcast_mul(Lia_i, eia)
+            # Response from both spin-up and spin-down density
+            Pi += (4./nkpts) * lib.einsum('Pia,Qia->PQ', Pia, Lia_i.conj())
 
     def get_screened_k_ref(self, dm_kpts=None, mo_coeff=None, screened=True, strategy=1):
         kpts = self.kpts
