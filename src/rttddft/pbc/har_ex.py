@@ -132,14 +132,13 @@ class DistDiel:
                 out=self.cderiarr_slice[ij]
             )
 
-        # Distribute kL=0 diagonal slices (where kpti == kptj) for Hartree across ranks
+        # Distribute the k-diagonal of Lpq across all ranks. The k-diagonal is always
+        # stored on rank 0.
         self.cderiarr_diag_slice = np.zeros(
             dtype=np.complex128,
             shape=(len(self.kL_inds), naux, nmo, nmo)
         )
 
-        # Populate cderiarr_diag_slice on all ranks. The k-diagonal happens
-        # to be stored on rank 0.
         reqs = []
         if rank == 0:
             kdiag_distribution = partition_range(nkpts, size)
@@ -163,7 +162,6 @@ class DistDiel:
 
 
     def get_static_diel(self):
-        mo_coeff = self.mf.mo_coeff
         mo_energy = self.qp_energies
         nocc = int(self.mf.cell.nelectron // 2)
         naux = self.mf.with_df.get_naoaux()
@@ -171,62 +169,58 @@ class DistDiel:
         nmo = nao
         nvir = nmo - nocc
         nkpts = self.nkpts
-        # win_shape = (len(self.kL_inds), naux, naux)
-        # win_len = np.prod(win_shape)
-        # win_nbytes = 16 * win_len
-        # self.invd_window = MPI.Win.Allocate(win_nbytes, 16, comm=comm)
-        # self.diel_cho = np.frombuffer(
-        #     self.invd_window.tomemory(),
-        #     dtype=np.complex128,
-        # ).reshape(win_shape)
-        # self.diel_cho[:] = 0.0
+
         self.Pi_static = np.zeros((len(self.kL_inds), naux, naux), dtype=np.complex128)
 
-        for ia, (kL, ki, ka) in enumerate(zip(self.kpts_L, self.kpts_i, self.kpts_j)):
+        for ij, (kL, ki, ka) in enumerate(zip(self.kpts_L, self.kpts_i, self.kpts_j)):
             ikL = kL - self.k_partition_divpts[rank]
             Pi = self.Pi_static[ikL]
             # Find ka that conserves with ki and kL (-ki+ka+kL=G)
-            Lia_i = np.ascontiguousarray(self.cderiarr_slice[ia][:, :nocc, nocc:])
-            eia = mo_energy[ki][:nocc, None] - mo_energy[ka][None, nocc:]
+            Lia_i = np.ascontiguousarray(self.cderiarr_slice[ij][:, :nocc, nocc:])
+            sqrteia = np.sqrt(mo_energy[ka][None, nocc:] - mo_energy[ki][:nocc, None])
 
+            rsqrteia = (1.0 / sqrteia).astype(Lia_i.dtype)
+            Pia = lib.broadcast_mul(Lia_i, rsqrteia)
 
-            # Since this is static dielectric function, effectively omega=0
-            eia = (1.0 / eia).astype(Lia_i.dtype)
-            Pia = lib.broadcast_mul(Lia_i, eia)
-            # Response from both spin-up and spin-down density
-            # Pi += (4./nkpts) * einsum('Pia,Qia->PQ', Pia, Lov.conj())
-            scipy.linalg.blas.zgemm(
-                alpha=4.0 / nkpts,
-                a=Lia_i.reshape(naux, nocc * nvir).T,
-                b=Pia.reshape(naux, nocc * nvir).T,
+            # Since trans=2, C=a^H a
+            #                 = Pia.reshape(naux, nocc * nvir).T.conj() 
+            #                    @ Pia.reshape(naux, nocc * nvir)
+            #                 = einsum('Qia, Pia->QP', Pia.conj(), Pia)
+            # With C = Pi.T,
+            # we have Pi = np.einsum('Pia, Qia->PQ', Pia, Pia.conj())
+            scipy.linalg.blas.zherk(
+                alpha=-4.0 / nkpts,
+                a=Pia.reshape(naux, nocc * nvir).T,
                 c=Pi.T,
-                trans_a=2,
-                trans_b=0,
+                trans=2,
                 beta=1.0,
                 overwrite_c=True,
             )
-        # for ikL in range(len(self.kL_inds)):
-        #     Pi = self.Pi_static[ikL]
-        #     self.Pi_static[ikL] = scipy.linalg.cholesky(np.eye(naux) - Pi, overwrite_a=True, lower=True).T
+        for ikL in range(len(self.kL_inds)):
+            lib.hermi_triu(self.Pi_static[ikL], inplace=True)
 
     def get_screened_Lpq(self):
-        mo_coeff = self.mf.mo_coeff
         naux = self.mf.with_df.get_naoaux()
         nao = self.mf.cell.nao
         nmo = nao
-        kpts = self.kpts
-        nkpts = len(kpts)
-        win_shape = (self.nkpt_pairs, naux, nmo, nmo)
 
         self.screened_cderiarr_slice = np.empty(
             dtype=np.complex128,
-            shape=win_shape
+            shape=(self.nkpt_pairs, naux, nmo, nmo)
         )
+
+        self.diel_cho = np.empty(
+            dtype=np.complex128,
+            shape=(len(self.kL_inds), naux, naux)
+        )
+
+        for ikL, kL in enumerate(self.kL_inds):
+            Pi = self.Pi_static[ikL]
+            self.diel_cho[ikL] = scipy.linalg.cholesky(np.eye(naux) - Pi, overwrite_a=True, lower=True)
 
         for ij, (kL, ki, kj) in enumerate(zip(self.kpts_L, self.kpts_i, self.kpts_j)):
             ikL = kL - self.k_partition_divpts[rank]
-            Pi = self.Pi_static[ikL]
-            Pi_chol = scipy.linalg.cholesky(np.eye(naux) - Pi, overwrite_a=True, lower=True)
+            Pi_chol = self.diel_cho[ikL]
             Lpq = self.cderiarr_slice[ij]
             self.screened_cderiarr_slice[ij] = scipy.linalg.solve_triangular(
                 Pi_chol, Lpq.reshape(naux, -1), lower=True, check_finite=False).reshape(naux, nmo, nmo)
@@ -340,13 +334,9 @@ class DistDiel:
         return self.get_k(dm_kpts=dm_kpts, mo_coeff=mo_coeff, screened=True)
 
     def get_static_diel_ref(self):
-        mo_coeff = self.mf.mo_coeff
         mo_energy = self.qp_energies
         nocc = int(self.mf.cell.nelectron // 2)
         naux = self.mf.with_df.get_naoaux()
-        nao = self.mf.cell.nao
-        nmo = nao
-        nvir = nmo - nocc
         nkpts = self.nkpts
 
         self.Pi_static_ref = np.zeros((len(self.kL_inds), naux, naux), dtype=np.complex128)
@@ -358,8 +348,7 @@ class DistDiel:
             Lia_i = np.ascontiguousarray(self.cderiarr_slice[ia][:, :nocc, nocc:])
             eia = mo_energy[ki][:nocc, None] - mo_energy[ka][None, nocc:]
 
-
-            # Since this is static dielectric function, effectively omega=0
+            # compare expressions from RPA and GW, with omega=0.
             eia = (1.0 / eia).astype(Lia_i.dtype)
             Pia = lib.broadcast_mul(Lia_i, eia)
             # Response from both spin-up and spin-down density
