@@ -1,6 +1,6 @@
 import math
 import numpy as np
-import numexpr as ne
+#import numexpr as ne
 import scipy.linalg as sla
 import scipy
 import h5py

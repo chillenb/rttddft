@@ -327,7 +327,7 @@ class MPIKRTTDSCF(rttdbase.RTTDSCF):
 
 
 
-        bc = KBasisChanger(self._scf.get_ovlp(), self._scf.mo_coeff, to_orthonormal=True, nkpts=nkpts)
+        bc = MPIKBasisChanger(self._scf.get_ovlp(), self._scf.mo_coeff, to_orthonormal=True, nkpts=nkpts)
         log = logger.new_logger(self, self.verbose)
 
         # with self.mol.with_common_origin((0.0, 0.0, 0.0)):
