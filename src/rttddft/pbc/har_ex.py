@@ -34,11 +34,40 @@ class DistDiel:
         self.nocc = int(mf.cell.nelectron // 2)
         self.nkpts = len(kpts)
         self.qp_energies = qp_energies
-        self.invd_window = None
+
+
+
+        # ndarray[int] describing global distribution of k-points
+        # length: size + 1
+        # rank p owns k_partition_divpts[p] -- k_partition_divpts[p+1].
+        self.k_partition_divpts = None
+
+        # ndarray[int] containing k_partition_divpts[p] -- k_partition_divpts[p+1].
+        self.kL_inds = None
+
+        # Used to partition k-point pairs over all ranks.
+        self.kpts_i = None
+        self.kpts_j = None
+        self.kpts_L = None
+
+        # cholesky factor of I - Pi[kL]
         self.diel_cho = None
+
+        # MO-transformed CDERIs.
         self.cderiarr_slice = None
+
+        # k-diagonal of MO-transformed CDERI. Used for get-j.
         self.cderiarr_diag_slice = None
-        self.kdiagonal_inds = None
+
+        # chol(I - Pi[kL])^-1 Lpq[ki, kj], same distribution
+        # as self.cderiarr_slice.
+        self.screened_cderiarr_slice = None
+
+        # Pi[kL].
+        self.Pi_static = None
+        # Pi[kL] ref vals used for debugging
+        self.Pi_static_ref = None
+
         self.calc_kconserv()
 
     def calc_kconserv(self):
@@ -104,10 +133,9 @@ class DistDiel:
             )
 
         # Distribute kL=0 diagonal slices (where kpti == kptj) for Hartree across ranks
-        self.kdiagonal_inds = np.arange(*get_subrange(nkpts, size, rank))
         self.cderiarr_diag_slice = np.zeros(
             dtype=np.complex128,
-            shape=(len(self.kdiagonal_inds), naux, nmo, nmo)
+            shape=(len(self.kL_inds), naux, nmo, nmo)
         )
 
         # Populate cderiarr_diag_slice on all ranks. The k-diagonal happens
@@ -127,7 +155,7 @@ class DistDiel:
                 else:
                     reqs.append(comm.Isend(Lia, dest=target_rank, tag=111 + ki))
         else:
-            for idx, ki in enumerate(self.kdiagonal_inds):
+            for idx, ki in enumerate(self.kL_inds):
                 reqs.append(comm.Irecv(self.cderiarr_diag_slice[idx], source=0, tag=111 + ki))
                 
         MPI.Request.Waitall(reqs)
@@ -212,7 +240,7 @@ class DistDiel:
         rho_P = np.zeros(naux, dtype=np.complex128)
 
         # Each rank calculates the partial rho_P from its assigned k points
-        for idx, k in enumerate(self.kdiagonal_inds):
+        for idx, k in enumerate(self.kL_inds):
             Lpq = self.cderiarr_diag_slice[idx]
             rho_P += np.einsum('Pij,ji->P', Lpq, dm_kpts[k], optimize=True)
             
@@ -221,7 +249,7 @@ class DistDiel:
         rho_P *= (1.0 / nkpts)
         
         # Each rank calculates the partial v_j for its assigned k points
-        for idx, k in enumerate(self.kdiagonal_inds):
+        for idx, k in enumerate(self.kL_inds):
             Lpq = self.cderiarr_diag_slice[idx]
             v_j[k] = np.einsum('Pij,P->ij', Lpq, rho_P, optimize=True)
                 
